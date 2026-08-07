@@ -190,6 +190,31 @@ verdict is correct; one that reads the operation paths can disagree with it.
 `explain_verdict_semantics` exists so an agent can look up what a verdict does
 *not* establish before repeating it to a person.
 
+### Or ask from the command line
+
+```bash
+polygraph ask "what undeclared sources does the pipeline read?"
+polygraph ask "can I trust fee_schedule?"
+polygraph ask "why did f1 drop?"
+```
+
+Two backends over the **same six tool functions** — there is one implementation
+of "can I trust this asset", not two:
+
+**Deterministic (default).** A keyword router. It needs no API key and produces
+identical output for identical input, which is why every claim in this README
+reproduces from a bare clone. It is not an agent and does not describe itself as
+one. Asked something it cannot classify, it declines and lists what it can
+answer rather than running the nearest-matching tool — silently answering a
+different question than the one asked is worse than declining. Exit code 3 when
+it does not understand, so it is scriptable.
+
+**LLM (`--llm`).** A real tool-use loop; the model picks tools and writes the
+answer from what they return. Needs `ANTHROPIC_API_KEY` and `pip install
+anthropic`. Gated behind a flag on purpose: a judge should never need
+credentials to verify a documented result. Without a key it says so plainly
+rather than degrading into something else.
+
 ---
 
 ## Architecture

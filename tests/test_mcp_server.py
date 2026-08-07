@@ -24,6 +24,14 @@ from fastmcp import Client  # noqa: E402
 from polygraph import mcp_server  # noqa: E402
 
 
+def test_mcp_server_exposes_no_stale_config_aliases():
+    """mcp_server must not shadow tools' config with import-time copies."""
+    assert not hasattr(mcp_server, "REPORT_PATH"), (
+        "a module-level copy would silently ignore changes to tools.REPORT_PATH"
+    )
+    assert not hasattr(mcp_server, "GMS")
+
+
 def call(tool: str, args: dict | None = None):
     async def _run():
         async with Client(mcp_server.mcp) as c:
@@ -77,8 +85,16 @@ def test_phantom_edges_names_the_stale_edge():
 
 def test_missing_report_is_reported_not_hidden(monkeypatch, tmp_path):
     """With no reconciliation report, the tool must say it has no evidence
-    rather than returning an empty list that reads as 'nothing wrong'."""
-    monkeypatch.setattr(mcp_server, "REPORT_PATH", tmp_path / "nope.json")
+    rather than returning an empty list that reads as 'nothing wrong'.
+
+    Patches polygraph.tools, not polygraph.mcp_server: the implementation lives
+    in tools and mcp_server only registers it. An earlier version of this test
+    patched a module-level alias on mcp_server and kept passing while testing
+    nothing.
+    """
+    from polygraph import tools as tools_mod
+
+    monkeypatch.setattr(tools_mod, "REPORT_PATH", tmp_path / "nope.json")
     r = call("list_undeclared_sources")
     assert r["evidence_available"] is False
     assert "polygraph reconcile" in r["answer"]

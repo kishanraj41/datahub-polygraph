@@ -11,4 +11,7 @@ numpy==2.4.4
 PyYAML>=6.0
 # MCP server: exposes Polygraph's verdicts as agent tools.
 fastmcp>=2.0
+# Optional: only needed for `polygraph ask --llm`. Everything documented in the
+# README reproduces without it, so a judge never needs an API key.
+anthropic>=0.40
 pytest>=7.0

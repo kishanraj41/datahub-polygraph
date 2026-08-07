@@ -24,6 +24,9 @@ dependencies = [
     "fastmcp>=2.0",
 ]
 
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+
 [project.urls]
 Homepage = "https://github.com/kishanraj41/datahub-polygraph"
 Repository = "https://github.com/kishanraj41/datahub-polygraph"

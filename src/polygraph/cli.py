@@ -15,6 +15,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import ask as ask_mod
 from . import declared as declared_mod
 from . import incident as incident_mod
 from . import reconcile as rec
@@ -241,6 +242,33 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ask(args: argparse.Namespace) -> int:
+    answer = ask_mod.ask(args.question, use_llm=args.llm, model=args.model)
+
+    if args.json:
+        print(json.dumps(
+            {
+                "question": answer.question,
+                "backend": answer.backend,
+                "intent": answer.intent,
+                "understood": answer.understood,
+                "tool_calls": answer.tool_calls,
+                "text": answer.text,
+                "data": answer.data,
+            },
+            indent=2, default=str,
+        ))
+    else:
+        print(f"[{answer.backend}] {answer.question}")
+        if answer.tool_calls:
+            print(f"tools: {', '.join(answer.tool_calls)}")
+        print()
+        print(answer.text)
+
+    # Not understanding the question is a real outcome, not a success.
+    return 0 if answer.understood else 3
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="polygraph", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -295,6 +323,18 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--token", default=None)
     sc.add_argument("--dry-run", action="store_true")
     sc.set_defaults(func=cmd_score)
+
+    a = sub.add_parser("ask", help="ask a trust question about the catalog")
+    a.add_argument("question")
+    a.add_argument(
+        "--llm",
+        action="store_true",
+        help="use a real tool-use agent loop (needs ANTHROPIC_API_KEY). Default is a "
+             "deterministic keyword router that needs no credentials.",
+    )
+    a.add_argument("--model", default=None)
+    a.add_argument("--json", action="store_true")
+    a.set_defaults(func=cmd_ask)
 
     return p
 
