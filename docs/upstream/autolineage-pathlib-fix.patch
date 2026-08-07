@@ -1,0 +1,40 @@
+diff --git a/autolineage/hooks/pandas_io.py b/autolineage/hooks/pandas_io.py
+--- a/autolineage/hooks/pandas_io.py
++++ b/autolineage/hooks/pandas_io.py
+@@ -1,6 +1,7 @@
+ """Pandas I/O hook provider."""
+ 
+ import os
++from os import PathLike
+ from functools import wraps
+ from . import BaseHookProvider
+ 
+@@ -40,8 +41,9 @@ class PandasIOHooks(BaseHookProvider):
+         @wraps(orig_fn)
+         def hooked(filepath_or_buffer, *args, **kwargs):
+             result, duration = provider._timed(orig_fn, filepath_or_buffer, *args, **kwargs)
+-            if isinstance(filepath_or_buffer, str) and os.path.exists(filepath_or_buffer):
+-                abs_path = os.path.abspath(filepath_or_buffer)
++            if isinstance(filepath_or_buffer, (str, PathLike)) and os.path.exists(filepath_or_buffer):
++                # os.fspath normalises pathlib.Path (and any PathLike) to str.
++                abs_path = os.path.abspath(os.fspath(filepath_or_buffer))
+                 lid = provider._get_or_assign(result, source=fn_name, filepath=abs_path)
+                 rec = provider._make_record(
+                     category="io", operation=fn_name,
+@@ -63,12 +65,12 @@ class PandasIOHooks(BaseHookProvider):
+ 
+             # Extract path from positional or keyword args
+             path = None
+-            if args and isinstance(args[0], str):
+-                path = args[0]
++            if args and isinstance(args[0], (str, PathLike)):
++                path = os.fspath(args[0])
+             else:
+                 for key in ('path_or_buf', 'path', 'excel_writer', 'fname'):
+-                    if key in kwargs and isinstance(kwargs[key], str):
+-                        path = kwargs[key]
++                    if key in kwargs and isinstance(kwargs[key], (str, PathLike)):
++                        path = os.fspath(kwargs[key])
+                         break
+ 
+             if path:

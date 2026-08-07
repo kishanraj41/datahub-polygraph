@@ -18,6 +18,7 @@ from pathlib import Path
 from . import ask as ask_mod
 from . import declared as declared_mod
 from . import incident as incident_mod
+from . import propose as propose_mod
 from . import reconcile as rec
 from . import score as score_mod
 from . import writeback as wb
@@ -269,6 +270,76 @@ def cmd_ask(args: argparse.Namespace) -> int:
     return 0 if answer.understood else 3
 
 
+def cmd_propose(args: argparse.Namespace) -> int:
+    from datahub.metadata.schema_classes import DataJobInputOutputClass
+
+    report = json.loads(Path(args.report).read_text(encoding="utf-8"))
+    proposals = propose_mod.build_proposals(report)
+
+    graph = declared_mod.connect(args.gms, args.token)
+    io = graph.get_aspect(args.job, DataJobInputOutputClass)
+    if io is None:
+        print(f"{args.job} has no dataJobInputOutput aspect.", file=sys.stderr)
+        return 1
+    current_inputs = list(io.inputDatasets or [])
+    outputs = list(io.outputDatasets or [])
+
+    planned = propose_mod.plan(proposals, current_inputs, args.job, allow_removals=args.remove_phantom)
+
+    propose_mod.write_report(proposals, planned, Path(args.out_json), Path(args.out_md))
+    print(propose_mod.to_markdown(proposals, planned))
+    print(f"Wrote {args.out_json} and {args.out_md}")
+
+    if not args.approve:
+        print(
+            "\nNOTHING APPLIED. These proposals change what the catalog claims, which is "
+            "categorically different from the tags and scores Polygraph writes into its own "
+            "namespace. Re-run with --approve to apply."
+        )
+        if any(p.requires_extra_flag for p in proposals) and not args.remove_phantom:
+            print(
+                "Phantom removals additionally require --remove-phantom. Read the safety "
+                "section above before using it: a conditional edge whose branch was not "
+                "taken is indistinguishable from a dead one in a single run."
+            )
+        return 0
+
+    if not planned["changed"]:
+        print("\nApproved, but the plan is a no-op. Nothing written.")
+        return 0
+
+    revert_path = Path(args.revert_file)
+    propose_mod.write_revert(revert_path, args.job, current_inputs, outputs)
+    print(f"\nRevert snapshot written to {revert_path} BEFORE any change.")
+
+    propose_mod.apply_plan(graph, args.job, planned["after"], outputs)
+
+    io2 = graph.get_aspect(args.job, DataJobInputOutputClass)
+    actual = sorted(io2.inputDatasets or []) if io2 else []
+    print("\ndeclared inputs now: " + json.dumps(actual, indent=2))
+    if actual != planned["after"]:
+        print("\nGATE 9: FAIL -- applied lineage does not match the plan", file=sys.stderr)
+        return 1
+
+    print("\nGATE 9: PASS -- lineage updated and verified")
+    print(f"Undo with: polygraph propose --revert {revert_path}")
+    return 0
+
+
+def cmd_revert(args: argparse.Namespace) -> int:
+    from datahub.metadata.schema_classes import DataJobInputOutputClass
+
+    snap = json.loads(Path(args.revert).read_text(encoding="utf-8"))
+    graph = declared_mod.connect(args.gms, args.token)
+    propose_mod.apply_plan(graph, snap["job"], snap["inputDatasets"], snap["outputDatasets"])
+
+    io = graph.get_aspect(snap["job"], DataJobInputOutputClass)
+    actual = sorted(io.inputDatasets or []) if io else []
+    ok = actual == sorted(snap["inputDatasets"])
+    print(json.dumps({"job": snap["job"], "restored_inputs": actual, "ok": ok}, indent=2))
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="polygraph", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -335,6 +406,26 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--model", default=None)
     a.add_argument("--json", action="store_true")
     a.set_defaults(func=cmd_ask)
+
+    pr = sub.add_parser(
+        "propose", help="propose lineage corrections from the verdicts (human-approved)"
+    )
+    pr.add_argument("--report", default="examples/reconciliation_report.json")
+    pr.add_argument("--job", default=DEFAULT_JOB)
+    pr.add_argument("--gms", default=DEFAULT_GMS)
+    pr.add_argument("--token", default=None)
+    pr.add_argument("--out-json", default="examples/lineage_proposals.json")
+    pr.add_argument("--out-md", default="examples/lineage_proposals.md")
+    pr.add_argument("--revert-file", default="examples/lineage_revert.json")
+    pr.add_argument("--approve", action="store_true", help="actually apply the proposals")
+    pr.add_argument(
+        "--remove-phantom",
+        action="store_true",
+        help="also remove phantom edges. Read the safety notes: a conditional edge whose "
+             "branch was not taken looks identical to a dead one in a single run.",
+    )
+    pr.add_argument("--revert", default=None, help="restore lineage from a revert snapshot")
+    pr.set_defaults(func=lambda a: cmd_revert(a) if a.revert else cmd_propose(a))
 
     return p
 
