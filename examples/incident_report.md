@@ -14,15 +14,17 @@ Both rows come from `metrics.json` files written by real runs of `demo/pipeline.
 
 AutoLineage's analyzer localises the collapse to the **`filter`** operation (impact score 1.0).
 
-Full ranking, so the confidence is visible rather than asserted:
+Ranking of critical and warning anomalies, so the confidence is visible rather than asserted:
 
 | Operation | Metric | Severity | Deviation |
 | --- | --- | --- | ---: |
 | `filter` | row_delta | critical | 94900.0 |
-| `train_test_split` | row_delta | critical | 95.0 |
 | `f1_score` | f1_score | critical | 100.0 |
 | `precision_score` | precision_score | critical | 100.0 |
 | `recall_score` | recall_score | critical | 100.0 |
+| `train_test_split` | row_delta | critical | 95.0 |
+
+Info-level signals are excluded: they include timing-sensitive counters that vary between identical runs, which would make this document's sha-256 meaningless. They do not affect localisation.
 
 ## Where it sits in the lineage
 

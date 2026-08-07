@@ -95,3 +95,43 @@ def test_shipped_examples_are_lf_and_utf8() -> None:
         raw = path.read_bytes()
         raw.decode("utf-8")  # raises if not valid UTF-8
         assert b"\r\n" not in raw, f"{path.name} contains CRLF; its published digest will not match"
+
+
+def test_incident_report_is_byte_reproducible_across_runs() -> None:
+    """Two runs of identical code must produce identical documents.
+
+    They did not. AutoLineage emits timing-sensitive info-level signals
+    (``pipeline / operation_count``), so one run listed 5 anomalies and the next
+    listed 6. Same code, same seed, different sha-256 -- which reads to anyone
+    checking as the integrity claim failing. Info-level signals are now excluded
+    and the ranking is sorted deterministically.
+    """
+    baseline = {"mode": "healthy", "f1": 0.8282290279627164, "rows_after_filter": 5994,
+                "filter_quantile": 0.999}
+    critical = [
+        {"operation": "filter", "metric": "row_delta", "severity": "critical", "deviation": 94900.0},
+        {"operation": "train_test_split", "metric": "row_delta", "severity": "critical",
+         "deviation": 95.0},
+        {"operation": "f1_score", "metric": "f1_score", "severity": "critical", "deviation": 100.0},
+    ]
+    run_a = {"mode": "buggy", "f1": 0.0, "rows_after_filter": 300, "filter_quantile": 0.05,
+             "anomalies": critical,
+             "root_cause": {"metric": "f1_score", "operation": "filter", "impact": 1.0}}
+    # Same run, but the analyzer emitted an extra info-level counter and a
+    # different ordering -- both of which really happen.
+    run_b = {**run_a, "anomalies": list(reversed(critical)) + [
+        {"operation": "pipeline", "metric": "operation_count", "severity": "info",
+         "deviation": 2.0}]}
+
+    observed = {"edges": [{"upstream": "file:a.csv", "downstream": "model:LogisticRegression",
+                           "operations": ["filter", "merge", "LogisticRegression.fit"]}]}
+    kw = dict(observed_graph=observed, job_urn="urn:li:dataJob:(x,y)",
+              owners=["urn:li:corpGroup:ml-platform-team"])
+
+    a = build_incident(baseline_metrics=baseline, degraded_metrics=run_a, **kw)
+    b = build_incident(baseline_metrics=baseline, degraded_metrics=run_b, **kw)
+
+    assert a.sha256 == b.sha256, (
+        "the incident document is not byte-reproducible; its published digest is worthless"
+    )
+    assert all(x["severity"] != "info" for x in a.anomalies)

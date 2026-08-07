@@ -130,12 +130,14 @@ an impact score of 1.0, against a next-ranked deviation three orders of
 magnitude lower. The incident document names the owning team
 (`urn:li:corpGroup:ml-platform-team`) resolved live from DataHub ownership.
 
-The document's sha-256 is stored on the DataHub document as
-`polygraph_sha256`. You can check it yourself:
+The document's sha-256 is stored on the DataHub document as `polygraph_sha256`.
+The report is byte-reproducible: rerunning the incident path on the same code
+produces the identical file and therefore the identical digest. You can check
+both — hash the shipped file, then regenerate it and hash again:
 
 ```bash
 sha256sum examples/incident_report.md
-# 743b60da8c3de2314f7e899230318806bef1cfa85387cb6366ec1a0ce5ad4c19
+# acbedff47da6255e6b69877f722e52c2421f711e560d8517919e04bfe12ee5d3
 ```
 
 ---
@@ -206,6 +208,11 @@ about what it cannot do.
   column-count deviations. A unit error that scales a column by 1000 while
   preserving every shape would not appear at all.
 - **Localisation is to an operation, not a line number.**
+- **Info-level anomalies are excluded from the incident report.** AutoLineage
+  emits timing-sensitive counters at `info` severity that vary between identical
+  runs. Including them made the report non-reproducible — same code, same seed,
+  different sha-256. They are filtered so the published digest means something;
+  they do not affect localisation.
 - **Synthetic demo data.** `demo/pipeline.py` generates its own 6,000-row
   dataset with a fixed seed so the demo reproduces from a clean clone with no
   downloads. The AutoLineage paper's headline case uses the real Kaggle

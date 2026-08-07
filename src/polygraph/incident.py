@@ -34,6 +34,16 @@ from pathlib import Path
 from typing import Any
 
 
+# Anomaly severities included in the report. ``info`` is excluded on purpose:
+# AutoLineage's info-level signals include timing-sensitive counters such as
+# ``pipeline / operation_count``, which vary by one or two between identical
+# runs. Including them made the incident document non-reproducible -- two runs
+# of the same code produced different sha-256 digests, which reads as the
+# integrity claim failing. The localisation result does not depend on them;
+# AutoLineage's own planted-bug README says so explicitly.
+REPORTED_SEVERITIES = ("critical", "warning")
+
+
 @dataclass
 class Incident:
     incident_id: str
@@ -90,6 +100,15 @@ def build_incident(
     root = degraded_metrics.get("root_cause") or {}
     root_op = root.get("operation")
 
+    # Deterministic subset, sorted deterministically. Two runs of the same code
+    # must produce byte-identical reports or the published digest is worthless.
+    anomalies = [
+        a
+        for a in (degraded_metrics.get("anomalies") or [])
+        if str(a.get("severity", "")).lower() in REPORTED_SEVERITIES
+    ]
+    anomalies.sort(key=lambda a: (-float(a.get("deviation", 0)), str(a.get("operation", ""))))
+
     edges = implicated_edges(observed_graph, root_op)
 
     # Content-addressed id: the same collapse produces the same id, so re-running
@@ -114,7 +133,7 @@ def build_incident(
         delta=bad_v - base_v,
         root_operation=root_op,
         impact_score=root.get("impact"),
-        anomalies=list(degraded_metrics.get("anomalies") or []),
+        anomalies=anomalies,
         implicated_edges=edges,
         job_urn=job_urn,
         owners=owners,
@@ -162,7 +181,8 @@ def render(inc: Incident) -> str:
 
     if inc.anomalies:
         lines += [
-            "Full ranking, so the confidence is visible rather than asserted:",
+            "Ranking of critical and warning anomalies, so the confidence is visible "
+            "rather than asserted:",
             "",
             "| Operation | Metric | Severity | Deviation |",
             "| --- | --- | --- | ---: |",
@@ -172,6 +192,13 @@ def render(inc: Incident) -> str:
                 f"| `{a['operation']}` | {a['metric']} | {a['severity']} | {a['deviation']} |"
             )
         lines.append("")
+
+        lines += [
+            "Info-level signals are excluded: they include timing-sensitive counters "
+            "that vary between identical runs, which would make this document's "
+            "sha-256 meaningless. They do not affect localisation.",
+            "",
+        ]
 
     lines += [
         "## Where it sits in the lineage",

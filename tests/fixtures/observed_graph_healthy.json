@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "run": {
+    "mode": "healthy"
+  },
+  "nodes": [
+    {
+      "key": "file:demo/data/fee_schedule.csv",
+      "kind": "file",
+      "detail": {
+        "operation": "read_csv",
+        "shape": [
+          4,
+          2
+        ],
+        "columns": [
+          "region",
+          "region_fee"
+        ],
+        "content_hash": "2a644fee392b87c3"
+      }
+    },
+    {
+      "key": "file:demo/data/raw_claims.csv",
+      "kind": "file",
+      "detail": {
+        "operation": "read_csv",
+        "shape": [
+          6000,
+          4
+        ],
+        "columns": [
+          "claim_id",
+          "amount",
+          "region",
+          "y"
+        ],
+        "content_hash": "6a8a009c00b8900b"
+      }
+    },
+    {
+      "key": "file:runs/healthy/predictions.csv",
+      "kind": "file",
+      "detail": {
+        "operation": "to_csv",
+        "rows": 1799
+      }
+    },
+    {
+      "key": "model:LogisticRegression",
+      "kind": "model",
+      "detail": {
+        "operation": "LogisticRegression.fit",
+        "input_shape": [
+          4195,
+          5
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "upstream": "file:demo/data/fee_schedule.csv",
+      "downstream": "file:runs/healthy/predictions.csv",
+      "operations": [
+        "filter",
+        "merge",
+        "drop",
+        "select",
+        "train_test_split",
+        "assign"
+      ],
+      "evidence": {
+        "upstream_kind": "file",
+        "downstream_kind": "file",
+        "hop_count": 6
+      }
+    },
+    {
+      "upstream": "file:demo/data/fee_schedule.csv",
+      "downstream": "model:LogisticRegression",
+      "operations": [
+        "filter",
+        "merge",
+        "drop",
+        "select",
+        "LogisticRegression.fit"
+      ],
+      "evidence": {
+        "upstream_kind": "file",
+        "downstream_kind": "model",
+        "hop_count": 5
+      }
+    },
+    {
+      "upstream": "file:demo/data/raw_claims.csv",
+      "downstream": "file:runs/healthy/predictions.csv",
+      "operations": [
+        "filter",
+        "concat",
+        "merge",
+        "drop",
+        "select",
+        "train_test_split",
+        "assign"
+      ],
+      "evidence": {
+        "upstream_kind": "file",
+        "downstream_kind": "file",
+        "hop_count": 7
+      }
+    },
+    {
+      "upstream": "file:demo/data/raw_claims.csv",
+      "downstream": "model:LogisticRegression",
+      "operations": [
+        "filter",
+        "concat",
+        "merge",
+        "drop",
+        "select",
+        "LogisticRegression.fit"
+      ],
+      "evidence": {
+        "upstream_kind": "file",
+        "downstream_kind": "model",
+        "hop_count": 6
+      }
+    }
+  ]
+}
