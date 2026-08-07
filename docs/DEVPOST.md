@@ -104,17 +104,44 @@ dataset. The offending `filter` sits on the path from two different sources.
 Picking one would look more impressive and would be a guess presented as a
 finding.
 
+## Ask an agent, not the catalog
+
+Polygraph also ships as an **MCP server**. `mcp-server-datahub` lets an agent read
+what the catalog claims; Polygraph's server lets the same agent read what the
+runtime proved. Six tools — `can_i_trust`, `get_integrity_score`,
+`list_undeclared_sources`, `list_phantom_edges`, `get_incident_report`,
+`explain_verdict_semantics`.
+
+The constraint I cared most about: **absent evidence must never read as a clean
+bill of health.** Every tool returns `evidence_available`, and asked about an
+asset Polygraph has not examined, `can_i_trust` says so in those words. A test
+asserts the tool returns no edge list at all in that case, because an empty list
+reads as "nothing wrong" — which is the exact failure mode this project exists
+to complain about.
+
+## Lineage Integrity Score
+
+Written to DataHub as structured properties. The obvious formula —
+verified-over-declared — scores a catalog **1.0** when it declares one correct
+edge and misses five real ones. Lineage drift is overwhelmingly a *recall*
+problem, so the score is the Jaccard index of declared vs observed edges, with
+precision and recall reported separately because they point at different fixes.
+The demo job scores **0.3333**.
+
+I also dropped a planned confidence weighting: DataHub OSS exposes no per-edge
+confidence on `dataJobInputOutput`, so there was nothing to weight by. Inventing
+a plausible-looking weight would have been the easy path.
+
 ## What's next
 
-- **Lineage Integrity Score** per asset, written as a structured property
-- **`polygraph ask`** — a trust-question agent over the reconciliation data
 - **Proposed lineage** — emit undeclared edges back as suggestions with human approval
 - **Upstream PR** to AutoLineage for the `pathlib.Path` capture bug
+- **Multi-run evidence** — aggregate captures so conditional edges stop looking phantom
 
 ## Built with
 
-`python` · `datahub` · `acryl-datahub` · `autolineage` · `pandas` ·
-`scikit-learn` · `docker`
+`python` · `datahub` · `acryl-datahub` · `autolineage` · `mcp` · `fastmcp` ·
+`pandas` · `scikit-learn` · `docker`
 
 ## Try it out
 

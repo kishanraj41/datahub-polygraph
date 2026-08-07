@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "polygraph": {
+      "command": "python",
+      "args": ["-m", "polygraph.mcp_server"],
+      "env": {
+        "PYTHONPATH": "C:\\dev\\polygraph\\src",
+        "POLYGRAPH_GMS": "http://localhost:8080",
+        "POLYGRAPH_REPORT": "C:\\dev\\polygraph\\examples\\reconciliation_report.json"
+      }
+    },
+    "datahub": {
+      "command": "uvx",
+      "args": ["mcp-server-datahub"],
+      "env": {
+        "DATAHUB_GMS_URL": "http://localhost:8080",
+        "TOOLS_IS_MUTATION_ENABLED": "true"
+      }
+    }
+  }
+}
