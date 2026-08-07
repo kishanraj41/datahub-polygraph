@@ -50,6 +50,16 @@ Step "healthy run (saves baseline fingerprint)" @("demo\pipeline.py", "--mode", 
 # --- buggy: one changed line. Loads the baseline, detects anomalies, localises.
 Step "buggy run (metric collapse + RCA)" @("demo\pipeline.py", "--mode", "buggy")
 
+# --- observe the healthy run too. run_gate9 and verify_all both reconcile
+# --- against runs\healthy\observed_graph.json, and this script wipes runs/ on
+# --- entry -- so not exporting it here leaves the next gate with nothing to read.
+Step "observe (healthy)" @(
+    "-m", "polygraph.cli", "observe",
+    "--trace", "runs\healthy\trace.json",
+    "--out",   "runs\healthy\observed_graph.json",
+    "--root",  ".", "--mode", "healthy"
+)
+
 # --- observed graph for the degraded run, so the incident can say where in the
 # --- lineage the offending operation sits.
 Step "observe (buggy)" @(

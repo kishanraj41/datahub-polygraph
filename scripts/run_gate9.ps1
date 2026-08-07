@@ -44,6 +44,44 @@ try {
 Push-Location $repo
 $revert = "examples\lineage_revert.json"
 
+# run_gate3.ps1 only runs `observe` for the buggy mode, so the healthy observed
+# graph is not guaranteed to exist. Gate 9 needs it to re-reconcile after each
+# phase. Regenerate rather than assuming.
+if (-not (Test-Path "runs\healthy\observed_graph.json")) {
+    Log "runs\healthy\observed_graph.json missing; regenerating the healthy capture."
+    & $py demo\pipeline.py --mode healthy 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Pop-Location; Die "Could not run the healthy pipeline." }
+    & $py -m polygraph.cli observe --trace "runs\healthy\trace.json" `
+        --out "runs\healthy\observed_graph.json" --root "." --mode healthy 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { Pop-Location; Die "Could not export the healthy observed graph." }
+    Log "Healthy capture regenerated."
+}
+
+function Reconcile($jsonPath) {
+    <#
+      Reconcile and return the parsed report. Fails loudly if the command did
+      not succeed or did not write the file, instead of parsing a missing file
+      and reporting the resulting empty value as a product fault -- which is
+      exactly what the first version of this script did.
+    #>
+    if (Test-Path $jsonPath) { Remove-Item $jsonPath -Force }
+    $mdPath = [System.IO.Path]::ChangeExtension($jsonPath, ".md")
+    $o = & $py -m polygraph.cli reconcile --observed "runs\healthy\observed_graph.json" `
+        --out-json $jsonPath --out-md $mdPath --allow-discrepancies 2>&1 | Out-String
+    Add-Content -Path $log -Value $o
+    if ($LASTEXITCODE -ne 0) {
+        Pop-Location; Die "reconcile exited $LASTEXITCODE. This is a harness or tool failure, not a catalog change.`n$o"
+    }
+    if (-not (Test-Path $jsonPath)) {
+        Pop-Location; Die "reconcile reported success but wrote no report at $jsonPath. Harness failure.`n$o"
+    }
+    $parsed = Get-Content $jsonPath -Raw | ConvertFrom-Json
+    if ($null -eq $parsed.summary.UNDECLARED) {
+        Pop-Location; Die "reconcile report at $jsonPath has no summary. Harness failure, not a catalog change."
+    }
+    return $parsed
+}
+
 function Run($label, $argList) {
     Log "----- $label -----"
     $out = & $py @argList 2>&1 | Out-String
@@ -61,9 +99,7 @@ if ($out -notmatch "requires --remove-phantom") { Pop-Location; Die "Dry run did
 Log "Dry run applied nothing and gated the removal, as intended."
 
 # Confirm the catalog is genuinely untouched.
-$before = (& $py -m polygraph.cli reconcile --observed "runs\healthy\observed_graph.json" `
-    --out-json "$env:TEMP\pg_before.json" --out-md "$env:TEMP\pg_before.md" --allow-discrepancies 2>&1 | Out-String)
-$b = Get-Content "$env:TEMP\pg_before.json" -Raw | ConvertFrom-Json
+$b = Reconcile "$env:TEMP\pg_before.json"
 if ($b.summary.UNDECLARED -ne 1) { Pop-Location; Die "Dry run changed the catalog: UNDECLARED is $($b.summary.UNDECLARED), expected 1." }
 Log "Catalog verified unchanged after the dry run."
 
@@ -77,9 +113,7 @@ Log "Revert snapshot exists at $revert"
 
 # The real proof: the undeclared source should now be declared, so reconciling
 # again must show UNDECLARED drop to 0 and VERIFIED rise.
-& $py -m polygraph.cli reconcile --observed "runs\healthy\observed_graph.json" `
-    --out-json "$env:TEMP\pg_after.json" --out-md "$env:TEMP\pg_after.md" --allow-discrepancies 2>&1 | Out-Null
-$a = Get-Content "$env:TEMP\pg_after.json" -Raw | ConvertFrom-Json
+$a = Reconcile "$env:TEMP\pg_after.json"
 Log ("after approve -- VERIFIED={0} PHANTOM={1} UNDECLARED={2}" -f $a.summary.VERIFIED, $a.summary.PHANTOM, $a.summary.UNDECLARED)
 if ($a.summary.UNDECLARED -ne 0) {
     Pop-Location; Die "Expected UNDECLARED=0 after declaring the shadow input, got $($a.summary.UNDECLARED)."
@@ -95,10 +129,7 @@ Log "The shadow input is now declared; the phantom edge is untouched. Correct."
 # ---------------------------------------------------------------- 3. revert
 Run "phase 3: revert" @("-m","polygraph.cli","propose","--revert",$revert) | Out-Null
 
-& $py -m polygraph.cli reconcile --observed "runs\healthy\observed_graph.json" `
-    --out-json "examples\reconciliation_report.json" --out-md "examples\reconciliation_report.md" `
-    --allow-discrepancies 2>&1 | Out-Null
-$rv = Get-Content "examples\reconciliation_report.json" -Raw | ConvertFrom-Json
+$rv = Reconcile "examples\reconciliation_report.json"
 Log ("after revert -- VERIFIED={0} PHANTOM={1} UNDECLARED={2}" -f $rv.summary.VERIFIED, $rv.summary.PHANTOM, $rv.summary.UNDECLARED)
 if ($rv.summary.VERIFIED -ne 1 -or $rv.summary.PHANTOM -ne 1 -or $rv.summary.UNDECLARED -ne 1) {
     Pop-Location

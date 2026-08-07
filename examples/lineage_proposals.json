@@ -1,0 +1,90 @@
+{
+  "proposals": [
+    {
+      "action": "ADD_INPUT",
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "rationale": "Runtime capture recorded data flowing along this edge through 5 operation(s), but the catalog does not declare it.",
+      "evidence": {
+        "operations": [
+          "filter",
+          "merge",
+          "drop",
+          "select",
+          "LogisticRegression.fit"
+        ],
+        "run": {
+          "mode": "healthy"
+        }
+      },
+      "safety": "Additive and evidence-backed. The edge demonstrably exists; declaring it can only make the catalog more accurate.",
+      "requires_extra_flag": false
+    },
+    {
+      "action": "REMOVE_INPUT",
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "rationale": "The catalog declares this edge but the captured run recorded no data flowing along it.",
+      "evidence": {
+        "run": {
+          "mode": "healthy"
+        }
+      },
+      "safety": "NOT SAFE FROM ONE RUN. A conditional edge whose branch was not taken during capture is indistinguishable from a dead one. Removing a real-but-conditional edge would make the catalog less true \u2014 the exact failure Polygraph exists to catch. Confirm across several runs, or ask the owning team, before approving.",
+      "requires_extra_flag": true
+    }
+  ],
+  "plan": {
+    "job": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+    "before": [
+      "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)"
+    ],
+    "after": [
+      "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)"
+    ],
+    "applied": [
+      {
+        "action": "ADD_INPUT",
+        "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+        "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+        "rationale": "Runtime capture recorded data flowing along this edge through 5 operation(s), but the catalog does not declare it.",
+        "evidence": {
+          "operations": [
+            "filter",
+            "merge",
+            "drop",
+            "select",
+            "LogisticRegression.fit"
+          ],
+          "run": {
+            "mode": "healthy"
+          }
+        },
+        "safety": "Additive and evidence-backed. The edge demonstrably exists; declaring it can only make the catalog more accurate.",
+        "requires_extra_flag": false
+      }
+    ],
+    "skipped": [
+      {
+        "proposal": {
+          "action": "REMOVE_INPUT",
+          "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+          "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+          "rationale": "The catalog declares this edge but the captured run recorded no data flowing along it.",
+          "evidence": {
+            "run": {
+              "mode": "healthy"
+            }
+          },
+          "safety": "NOT SAFE FROM ONE RUN. A conditional edge whose branch was not taken during capture is indistinguishable from a dead one. Removing a real-but-conditional edge would make the catalog less true \u2014 the exact failure Polygraph exists to catch. Confirm across several runs, or ask the owning team, before approving.",
+          "requires_extra_flag": true
+        },
+        "why": "removal requires --remove-phantom"
+      }
+    ],
+    "changed": true
+  }
+}
