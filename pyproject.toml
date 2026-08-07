@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "datahub-polygraph"
+version = "0.1.0"
+description = "A lie detector for data catalogs: reconcile declared DataHub lineage against runtime-observed lineage."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Kishan Raj Vandhavasi" }]
+keywords = ["datahub", "data-lineage", "data-catalog", "mlops", "data-quality", "observability"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "acryl-datahub==1.7.0",
+    "autolineage[sklearn]==0.6.2",
+    "PyYAML>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kishanraj41/datahub-polygraph"
+Repository = "https://github.com/kishanraj41/datahub-polygraph"
+
+[project.scripts]
+polygraph = "polygraph.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

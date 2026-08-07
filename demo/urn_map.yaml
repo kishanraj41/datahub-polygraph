@@ -1,0 +1,18 @@
+# Observed-graph node keys -> DataHub URNs.
+#
+# Explicit only. Polygraph will not guess a mapping: an observed node with no
+# entry here is reported as unmapped rather than being matched by similarity.
+
+nodes:
+  "file:demo/data/raw_claims.csv":
+    "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)"
+  "file:demo/data/fee_schedule.csv":
+    "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)"
+  "model:LogisticRegression":
+    "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)"
+
+patterns:
+  # predictions.csv lands under runs/<mode>/, so the run directory varies while
+  # the asset does not. The glob is declared, not inferred.
+  - match: "file:runs/*/predictions.csv"
+    urn: "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fraud_predictions,PROD)"

@@ -1,0 +1,12 @@
+# Pinned exactly. The demo publishes real F1 numbers from real runs, so the
+# numbers a judge reproduces must match the numbers in the README. pandas and
+# scikit-learn minor versions can move a metric, and AutoLineage's hook coverage
+# is version-sensitive, so these are pins rather than floors.
+acryl-datahub==1.7.0
+mcp-server-datahub==0.6.0
+autolineage[sklearn]==0.6.2
+pandas==3.0.2
+scikit-learn==1.8.0
+numpy==2.4.4
+PyYAML>=6.0
+pytest>=7.0

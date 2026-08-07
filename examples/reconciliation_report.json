@@ -1,0 +1,64 @@
+{
+  "generated_at": "2026-08-06T23:00:58+00:00",
+  "run": {
+    "mode": "healthy"
+  },
+  "summary": {
+    "VERIFIED": 1,
+    "PHANTOM": 1,
+    "UNDECLARED": 1,
+    "declared_total": 2,
+    "observed_total": 2,
+    "unmapped_nodes": [],
+    "skipped_observed_edges": [],
+    "out_of_scope_observed_edges": [
+      {
+        "upstream": "file:demo/data/fee_schedule.csv",
+        "downstream": "file:runs/healthy/predictions.csv"
+      },
+      {
+        "upstream": "file:demo/data/raw_claims.csv",
+        "downstream": "file:runs/healthy/predictions.csv"
+      }
+    ]
+  },
+  "verdicts": [
+    {
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "verdict": "PHANTOM",
+      "reason": "declared in the catalog, but the captured run recorded no data flow along this edge",
+      "operations": [],
+      "declared_via": "dataJob.inputDatasets"
+    },
+    {
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "verdict": "UNDECLARED",
+      "reason": "runtime capture proves this edge exists, but the catalog does not declare it",
+      "operations": [
+        "filter",
+        "merge",
+        "drop",
+        "select",
+        "LogisticRegression.fit"
+      ],
+      "declared_via": ""
+    },
+    {
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "verdict": "VERIFIED",
+      "reason": "runtime capture shows data flowing along this edge via 6 recorded operation(s)",
+      "operations": [
+        "filter",
+        "concat",
+        "merge",
+        "drop",
+        "select",
+        "LogisticRegression.fit"
+      ],
+      "declared_via": "dataJob.inputDatasets"
+    }
+  ]
+}

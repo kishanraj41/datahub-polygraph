@@ -1,0 +1,46 @@
+{
+  "mode": "buggy",
+  "rows_after_filter": 300,
+  "filter_quantile": 0.05,
+  "f1": 0.0,
+  "precision": 0.0,
+  "recall": 0.0,
+  "accuracy": 0.9555555555555556,
+  "anomalies": [
+    {
+      "operation": "filter",
+      "metric": "row_delta",
+      "severity": "critical",
+      "deviation": 94900.0
+    },
+    {
+      "operation": "train_test_split",
+      "metric": "row_delta",
+      "severity": "critical",
+      "deviation": 95.0
+    },
+    {
+      "operation": "f1_score",
+      "metric": "f1_score",
+      "severity": "critical",
+      "deviation": 100.0
+    },
+    {
+      "operation": "precision_score",
+      "metric": "precision_score",
+      "severity": "critical",
+      "deviation": 100.0
+    },
+    {
+      "operation": "recall_score",
+      "metric": "recall_score",
+      "severity": "critical",
+      "deviation": 100.0
+    }
+  ],
+  "root_cause": {
+    "metric": "f1_score",
+    "operation": "filter",
+    "impact": 1.0
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "description": "Test oracle for Polygraph. Every edge the catalog will declare, plus the edge it deliberately omits, with the verdict the reconciler must reach. Phase 4's gate is that the reconciler output matches this file exactly.",
+  "scope": {
+    "note": "Polygraph reconciles inputs: edges into the training job. Output edges (job -> predictions) are declared in the catalog for lineage display but are not reconciled, because the tags assert things about sources.",
+    "downstream_urns": [
+      "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)"
+    ]
+  },
+  "edges": [
+    {
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "declared": true,
+      "expected_verdict": "VERIFIED",
+      "why": "Declared as an input and genuinely read by the pipeline via read_csv."
+    },
+    {
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "declared": true,
+      "expected_verdict": "PHANTOM",
+      "why": "Declared as an input. The pipeline never opens this file. This is the stale edge."
+    },
+    {
+      "upstream": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+      "downstream": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "declared": false,
+      "expected_verdict": "UNDECLARED",
+      "why": "Never declared, but the pipeline reads it and merges it in. This is the shadow input."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Polygraph publishes sha-256 digests of its own reports into DataHub. Git
+# translating line endings on checkout would break that verification, so text
+# artifacts are pinned to LF.
+* text=auto eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.py text eol=lf
+*.ps1 text eol=crlf
