@@ -37,16 +37,28 @@ $EXPECTED_SCORE = 0.3333
 
 $results = [System.Collections.ArrayList]::new()
 $failures = [System.Collections.ArrayList]::new()
+$humanTodos = [System.Collections.ArrayList]::new()
 
 function Log($msg) {
     $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $msg
     Write-Host $line; Add-Content -Path $log -Value $line
 }
-function Record($phase, $check, $ok, $detail) {
-    [void]$results.Add([pscustomobject]@{ Phase = $phase; Check = $check; OK = $ok; Detail = $detail })
-    $mark = if ($ok) { "PASS" } else { "FAIL" }
+function Record($phase, $check, $ok, $detail, $human = $false) {
+    <#
+      $human marks a check that can only be satisfied by Kishan (post a paper,
+      record a video). Those are real blockers for submission but they are not
+      code defects, and lumping them together hides genuine regressions in a
+      list of known TODOs.
+    #>
+    [void]$results.Add([pscustomobject]@{
+        Phase = $phase; Check = $check; OK = $ok; Detail = $detail; Human = $human
+    })
+    $mark = if ($ok) { "PASS" } elseif ($human) { "TODO" } else { "FAIL" }
     Log ("  [{0}] {1}: {2}" -f $mark, $check, $detail)
-    if (-not $ok) { [void]$failures.Add("$phase / $check -- $detail") }
+    if (-not $ok) {
+        if ($human) { [void]$humanTodos.Add("$check -- $detail") }
+        else { [void]$failures.Add("$phase / $check -- $detail") }
+    }
 }
 function RunScript($phase, $name, $script) {
     Log ""
@@ -170,8 +182,9 @@ $readme = Get-Content (Join-Path $repo "README.md") -Raw
 Record "7" "README publishes the real F1" ($readme -match [regex]::Escape("0.8282")) "0.8282"
 Record "7" "README has a Limitations section" ($readme -match "## Limitations") "required by the brief"
 $placeholder = $readme -match "\[KISHAN: Paper 2 SSRN URL\]"
-Record "7" "Paper 2 URL still a placeholder" (-not $placeholder) `
-    $(if ($placeholder) { "REPLACE BEFORE SUBMITTING" } else { "resolved" })
+Record "7" "Paper 2 SSRN URL filled in" (-not $placeholder) `
+    $(if ($placeholder) { "still [KISHAN: Paper 2 SSRN URL] -- post to SSRN and replace" } else { "resolved" }) `
+    $true
 
 # The numbers the demo turns on, read back from the live catalog.
 $rep = Get-Content (Join-Path $repo "examples\reconciliation_report.json") -Raw | ConvertFrom-Json
@@ -179,8 +192,29 @@ $verdictOk = $rep.summary.VERIFIED -eq 1 -and $rep.summary.PHANTOM -eq 1 -and $r
 Record "7" "verdicts are 1/1/1" $verdictOk `
     "V=$($rep.summary.VERIFIED) P=$($rep.summary.PHANTOM) U=$($rep.summary.UNDECLARED)"
 
-$scoreOut = & $py -m polygraph.cli score --dry-run --out-md "$env:TEMP\pg_score.md" 2>&1 | Out-String
-Record "7" "integrity score is $EXPECTED_SCORE" ($scoreOut -match [regex]::Escape("$EXPECTED_SCORE")) "from the live report"
+# Emit the score as JSON and compare numerically. No console parsing.
+$scoreJson = & $py -c @"
+import json, sys
+sys.path.insert(0, 'src')
+from polygraph.score import score_all_consumers
+report = json.load(open('examples/reconciliation_report.json'))
+print(json.dumps([s.to_dict() for s in score_all_consumers(report)]))
+"@ 2>&1 | Out-String
+
+$scoreOk = $false; $scoreDetail = "could not compute"
+try {
+    $scores = $scoreJson | ConvertFrom-Json
+    $job = $scores | Where-Object { $_.entity_urn -like "*train_fraud_model*" } | Select-Object -First 1
+    if ($null -ne $job) {
+        $scoreOk = [math]::Abs([double]$job.score - $EXPECTED_SCORE) -lt 1e-6
+        $scoreDetail = "score=$($job.score) precision=$($job.precision) recall=$($job.recall)"
+    } else {
+        $scoreDetail = "no score for train_fraud_model in the report"
+    }
+} catch {
+    $scoreDetail = "score computation failed: $($_.Exception.Message). Raw: $($scoreJson.Trim())"
+}
+Record "7" "integrity score is $EXPECTED_SCORE" $scoreOk $scoreDetail
 
 $docs = @("docs\VIDEO_SCRIPT.md","docs\DEVPOST.md","docs\claude_desktop_config.example.json",
           "docs\upstream\PR_DRAFT.md","docs\upstream\autolineage-pathlib-fix.patch")
@@ -194,15 +228,25 @@ Pop-Location
 Log ""
 Log "=================================================================="
 $results | ForEach-Object {
-    $mark = if ($_.OK) { "PASS" } else { "FAIL" }
+    $mark = if ($_.OK) { "PASS" } elseif ($_.Human) { "TODO" } else { "FAIL" }
     Log ("  {0}  {1,-46} {2}" -f $mark, $_.Check, $_.Detail)
 }
 Log "=================================================================="
 $total = $results.Count
-$bad = @($results | Where-Object { -not $_.OK }).Count
+$bad = $failures.Count
+$todo = $humanTodos.Count
 Log ""
+if ($todo -gt 0) {
+    Log "$todo item(s) waiting on you (not code defects):"
+    $humanTodos | ForEach-Object { Log "  - $_" }
+    Log ""
+}
 if ($bad -eq 0) {
-    Log "ALL $total CHECKS GREEN."
+    if ($todo -eq 0) {
+        Log "ALL $total CHECKS GREEN. Submission-ready."
+    } else {
+        Log "NO CODE DEFECTS. $($total - $todo) of $total green; $todo waiting on you."
+    }
     Log ""
     Log "Verified against one commit and one catalog state:"
     Log "  - $passed tests, $skipped skipped"
@@ -214,10 +258,10 @@ if ($bad -eq 0) {
     Log "  - proposals applied and reverted cleanly"
     Log "  - fresh clone reproduces the README"
     Log ""
-    Log "Still requires a human: UI screenshots, the video, Devpost, Paper 2 URL."
-    exit 0
+    Log "Still requires a human: UI screenshots, the video, the Devpost submission."
+    exit $(if ($todo -gt 0) { 2 } else { 0 })
 } else {
-    Log "$bad OF $total CHECKS FAILED:"
+    Log "$bad CODE DEFECT(S) OUT OF $total CHECKS:"
     $failures | ForEach-Object { Log "  - $_" }
     Log ""
     Log "Full output: $log"

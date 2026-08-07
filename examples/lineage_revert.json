@@ -1,0 +1,12 @@
+{
+  "note": "Polygraph modified this job's declared lineage. Restore with: polygraph propose --revert <this file>",
+  "captured_at": "2026-08-07T02:48:41+00:00",
+  "job": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+  "inputDatasets": [
+    "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+    "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)"
+  ],
+  "outputDatasets": [
+    "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fraud_predictions,PROD)"
+  ]
+}
