@@ -21,6 +21,7 @@ dependencies = [
     "acryl-datahub==1.7.0",
     "autolineage[sklearn]==0.6.2",
     "PyYAML>=6.0",
+    "fastmcp>=2.0",
 ]
 
 [project.urls]
@@ -29,6 +30,7 @@ Repository = "https://github.com/kishanraj41/datahub-polygraph"
 
 [project.scripts]
 polygraph = "polygraph.cli:main"
+polygraph-mcp = "polygraph.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

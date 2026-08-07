@@ -142,6 +142,56 @@ sha256sum examples/incident_report.md
 
 ---
 
+## Ask an agent instead
+
+`mcp-server-datahub` lets an agent read what the catalog **claims**. Polygraph
+ships its own MCP server so the same agent can read what the runtime **proved**,
+and the gap between them.
+
+```bash
+python -m polygraph.mcp_server        # stdio
+```
+
+Register it alongside DataHub's own server in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "polygraph": {
+      "command": "python",
+      "args": ["-m", "polygraph.mcp_server"],
+      "env": { "PYTHONPATH": "/path/to/datahub-polygraph/src" }
+    }
+  }
+}
+```
+
+| Tool | Answers |
+| --- | --- |
+| `can_i_trust(asset_urn)` | Did this asset's declared lineage survive a real run? |
+| `get_integrity_score(job_urn)` | Score, precision, recall, and which way the catalog is wrong |
+| `list_undeclared_sources()` | What does the pipeline read that nobody declared? |
+| `list_phantom_edges()` | Which declared edges carried no data? |
+| `get_incident_report(urn)` | The hash-verified incident, root operation and owner |
+| `explain_verdict_semantics()` | What the verdicts do **not** establish |
+
+Two design choices worth naming, because they are what stop an agent from
+overstating the findings:
+
+**Absent evidence is never silence.** Every tool returns `evidence_available`.
+Asked about an asset Polygraph has not examined, `can_i_trust` says so
+explicitly — *"there is no evidence either way. Do not treat this as a clean
+bill of health."* An empty result that reads as "nothing wrong" is the failure
+mode this project exists to complain about, so the server refuses to produce
+one.
+
+**Every tool returns evidence, not just a verdict.** An agent that relays the
+verdict is correct; one that reads the operation paths can disagree with it.
+`explain_verdict_semantics` exists so an agent can look up what a verdict does
+*not* establish before repeating it to a person.
+
+---
+
 ## Architecture
 
 ```mermaid

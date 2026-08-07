@@ -29,7 +29,7 @@ $env:PYTHONHASHSEED = "0"
 # A fresh clone has no runs/, so the two fixture-vs-live drift checks have
 # nothing to compare against. Everything else must actually execute.
 $EXPECTED_MAX_SKIPS = 2
-$EXPECTED_MIN_PASSES = 20
+$EXPECTED_MIN_PASSES = 27
 $EXPECTED_F1 = 0.8282290279627164
 
 function Log($msg) {
