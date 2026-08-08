@@ -58,6 +58,43 @@ class CatalogContextError(DataHubMcpError):
     pass
 
 
+# A GraphQL entity carrying only these keys is a URN echo, not a catalog record.
+IDENTITY_ONLY_KEYS = {"urn", "type"}
+
+
+def _carries_metadata(entity: dict) -> bool:
+    """Does this response actually describe an asset, or just repeat its URN?
+
+    DataHub's ``entities(urns:)`` resolver answers for **any syntactically valid
+    URN**, registered or not. Ask it about an asset that has never existed and it
+    returns a shell: the urn, a `type` derived from the urn's own text, and every
+    other field null. Nothing in the response says "I have never heard of this".
+
+    Verified against a live GMS: a fabricated dataset URN came back as
+    ``{"urn": ..., "type": "DATASET"}`` alongside three real assets, and the
+    first version of this module reported it as found.
+
+    That matters more here than in most places. An agent asking DataHub "does
+    this asset exist?" through the MCP Server gets yes for anything URN-shaped --
+    a confident answer with no knowledge behind it, which is the exact failure
+    Polygraph exists to complain about. Polygraph would be a poor advertisement
+    for itself if it repeated it.
+
+    LIMITATION, stated rather than hidden: an entity that is genuinely
+    registered but carries no properties, ownership, tags or description at all
+    is indistinguishable from a shell by this test, and will be reported as not
+    found. Distinguishing them needs an existence check the MCP Server does not
+    expose.
+    """
+    for key, value in entity.items():
+        if key in IDENTITY_ONLY_KEYS:
+            continue
+        if value is None or value == "" or value == [] or value == {}:
+            continue
+        return True
+    return False
+
+
 @dataclass
 class AssetContext:
     """What the catalog says about one asset. Testimony, not evidence."""
@@ -80,6 +117,13 @@ class AssetContext:
             "note": (
                 "The catalog's own claim about this asset. Polygraph does not verify "
                 "ownership or descriptions -- only lineage."
+            )
+            if self.found
+            else (
+                "The catalog returned no metadata for this URN. DataHub answers "
+                "entities(urns:) for any syntactically valid URN, so a response is not "
+                "evidence the asset is registered -- this one carried nothing but the "
+                "URN itself."
             ),
         }
 
@@ -219,8 +263,10 @@ def fetch_catalog_context(
     context: dict[str, AssetContext] = {}
     for urn in urns:
         entity = index.get(urn)
-        if entity is None:
-            context[urn] = AssetContext(urn=urn, found=False)
+        # Absent from the response and present-but-empty are the same finding:
+        # the catalog told us nothing about this asset. See _carries_metadata.
+        if entity is None or not _carries_metadata(entity):
+            context[urn] = AssetContext(urn=urn, found=False, raw=entity or {})
             continue
         context[urn] = AssetContext(
             urn=urn,

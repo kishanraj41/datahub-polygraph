@@ -206,3 +206,38 @@ Worth stating plainly: nothing about the demo path broke during any of this.
 `0.8282290279627164`, verdicts 1/1/1, digest `acbedff4…` — because every step of
 it reads aspects from MySQL. That is a real property of the design, not luck,
 but it is also exactly why the outage went unnoticed for 17 hours.
+
+## 2026-08-08 — Gate 10a's last red was the best finding of the day
+
+Search came back (`fix_search_backend.ps1`: OpenSearch restarted, GMS restarted
+so it re-resolved `search`, all four probes OK, cluster yellow with 95 active
+shards). One check still failed:
+
+```
+[FAIL] a nonexistent URN is reported missing, not dropped
+```
+
+The cause is worth the whole detour. DataHub's `entities(urns:)` answers for
+**any syntactically valid URN**. A fabricated dataset came back as
+`{"urn": ..., "type": "DATASET"}` — `type` inferred from the URN's own text,
+every other field null, nothing anywhere saying "unknown". `catalog_mcp` was
+indexing the response by URN and calling anything present `found`, so a dataset
+nobody has ever registered was reported as a catalog record.
+
+An agent asking DataHub through the MCP Server "does this asset exist?" gets yes
+for anything URN-shaped. That is a confident answer with nothing behind it,
+which is the exact failure Polygraph exists to complain about — so reproducing
+it would have been the worst possible bug for this project to ship.
+
+`_carries_metadata` now requires something beyond `urn` and `type`. The
+limitation is stated rather than hidden: a genuinely registered but entirely
+bare entity is indistinguishable from a shell by this test, and the MCP Server
+exposes no existence check that would settle it.
+
+The gate caught it because it queries a deliberately fabricated URN against the
+live catalog rather than asserting that the call returned something. A smoke
+test that only checks for a non-empty response would have passed this.
+
+Also fixed: `docker inspect --format '{{index .Config.Labels "key"}}'` returns
+nothing under PowerShell, which mangles double quotes inside a native-command
+argument. `{{json .Config.Labels}}` plus `ConvertFrom-Json` works. 92 tests.

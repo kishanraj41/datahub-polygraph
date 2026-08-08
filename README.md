@@ -260,8 +260,19 @@ fixed path. A hard-coded path would break silently on a server upgrade: an empty
 upstream set would make Polygraph report a catalog full of phantom edges, and a
 missing `ownership` node would make it report an unowned asset. Confidently
 wrong, in the exact way this project exists to catch. An empty lineage result
-raises instead of producing verdicts, and a URN the catalog does not know comes
-back marked `found: false` rather than silently disappearing.
+therefore raises instead of producing verdicts.
+
+**A URN echo is not knowledge.** DataHub answers `entities(urns:)` for *any*
+syntactically valid URN, registered or not. Asked about a dataset that has never
+existed, it returns `{"urn": ..., "type": "DATASET"}` — a `type` inferred from
+the URN's own text, every other field null, and nothing anywhere saying "I have
+never heard of this". An agent asking DataHub through the MCP Server whether an
+asset exists gets **yes for anything URN-shaped**.
+
+Polygraph reports such a response as `found: false`, because a response that
+carries nothing but the URN you sent is not evidence of anything. Gate 10a checks
+this against a live catalog with a fabricated URN — it is how the behaviour was
+found in the first place.
 
 A second finding, separate from the point-in-time bug: the MCP Server **cannot**
 report a data job's declared inputs at all. `inputOutput` / `inputDatasets` /
@@ -364,6 +375,12 @@ about what it cannot do.
   agent tools report owners and descriptions as the catalog states them.
   Polygraph verifies lineage and nothing else — an owner field can be as stale
   as an edge, and Polygraph will not tell you.
+- **"Not found" is a heuristic, not an existence check.** Polygraph treats a
+  `get_entities` response carrying nothing but `urn` and `type` as *the catalog
+  knows nothing about this*, because DataHub answers for any URN-shaped string.
+  An asset that is genuinely registered but has no properties, owners, tags or
+  description at all is indistinguishable from that, and will be reported as not
+  found. The MCP Server exposes no existence check that would settle it.
 - **Python 3.12 is untested by DataHub.** The CLI warns. It worked throughout
   this build, but 3.11 is the supported version.
 - **One pipeline, one catalog shape.** The URN mapping is explicit YAML. Using

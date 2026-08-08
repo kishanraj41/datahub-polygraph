@@ -53,8 +53,25 @@ if (-not $gms)    { Die "No GMS container found." }
 Log "search container: $search"
 Log "gms container:    $gms"
 
-$project = (docker inspect $gms --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>$null).Trim()
-$compose = (docker inspect $gms --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' 2>$null).Trim()
+# Read the labels as JSON rather than with `{{index .Config.Labels "key"}}`.
+# PowerShell mangles double quotes inside an argument to a native command, so
+# docker received an invalid Go template, printed nothing, and .Trim() on the
+# null threw. The label names contain dots, so they need the quoted-property
+# form on the PowerShell side instead.
+$project = $null
+$compose = $null
+$labelsJson = docker inspect $gms --format '{{json .Config.Labels}}' 2>$null
+if ($LASTEXITCODE -eq 0 -and $labelsJson) {
+    try {
+        $labels  = $labelsJson | ConvertFrom-Json
+        $project = $labels.'com.docker.compose.project'
+        $compose = $labels.'com.docker.compose.project.config_files'
+    } catch {
+        Log "  could not parse compose labels: $_"
+    }
+}
+if (-not $project) { $project = "datahub" }
+if (-not $compose) { $compose = Join-Path $env:USERPROFILE ".datahub\quickstart\docker-compose.yml" }
 Log "compose project:  $project"
 Log "compose file:     $compose"
 

@@ -68,9 +68,15 @@ def main() -> int:
     check("the training job was found", context[JOB].found)
     check("raw_claims was found", context[RAW].found)
     check("fee_schedule was found", context[FEE].found)
+    # The check that caught a real defect. DataHub answers entities(urns:) for
+    # any syntactically valid URN, returning a shell with type derived from the
+    # URN text and everything else null. "The response mentioned it" is not
+    # knowledge, and reporting it as found would make Polygraph guilty of the
+    # thing it accuses catalogs of.
     check(
-        "a nonexistent URN is reported missing, not dropped",
+        "a URN the catalog has never seen is reported as not found",
         GHOST in context and context[GHOST].found is False,
+        f"raw response for the fabricated URN: {context[GHOST].raw if GHOST in context else '-'}",
     )
     check(
         "the job's owner matches what the seeder set",

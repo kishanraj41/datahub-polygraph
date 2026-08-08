@@ -140,6 +140,39 @@ This is a one-field change upstream. Draft in `docs/upstream/`.
 
 ---
 
+## A third finding: the MCP Server answers for URNs that do not exist
+
+`get_entities` resolves to GraphQL `entities(urns:)`, which answers for **any
+syntactically valid URN**. Observed against a live GMS v1.7.0, asking about three
+real assets and one fabricated one:
+
+```json
+{"urn": "...polygraph.demo.raw_claims,PROD)", "type": "DATASET",
+ "properties": {"name": "polygraph.demo.raw_claims", ...},
+ "ownership": {"owners": [{"owner": {"urn": "urn:li:corpGroup:ml-platform-team"}}]}}
+
+{"urn": "...polygraph.demo.does_not_exist,PROD)", "type": "DATASET"}
+```
+
+The second entry is a shell. `type` was inferred from the URN's own text; every
+other field is null. Nothing in the response distinguishes it from an asset that
+exists but is sparsely documented, and nothing says "unknown".
+
+So an agent that asks DataHub through the MCP Server *"does this asset exist?"*
+gets **yes for anything URN-shaped**. That is a confident answer with no
+knowledge behind it — precisely the failure mode this project exists to
+complain about, which makes it a poor thing for this project to reproduce.
+
+`catalog_mcp._carries_metadata` therefore requires a response to carry something
+beyond `urn` and `type` before reporting `found: true`. The limitation is real
+and stated in the README: a genuinely registered but entirely bare entity is
+indistinguishable from a shell by this test.
+
+This was caught by Gate 10a, which queries a deliberately fabricated URN against
+the live catalog. The first version of `catalog_mcp` reported it as found.
+
+---
+
 ## Two servers in one agent loop
 
 `polygraph ask --llm` holds tools from both servers at once:

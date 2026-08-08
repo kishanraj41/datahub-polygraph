@@ -107,6 +107,46 @@ def test_missing_urns_come_back_marked_missing(monkeypatch):
     assert ctx[GHOST].owners == []
 
 
+def test_a_urn_echo_is_not_a_catalog_record(monkeypatch):
+    """Observed against a live GMS. DataHub answers entities(urns:) for ANY
+    syntactically valid URN: a fabricated dataset came back as
+    {"urn": ..., "type": "DATASET"} with every other field null, and the first
+    version of this module reported it as found.
+
+    An agent asking "does this asset exist?" would have got yes for a URN nobody
+    has ever registered."""
+    _patch(monkeypatch, {"get_entities": [
+        {"urn": RAW, "type": "DATASET", "properties": {"name": "raw_claims"}},
+        {"urn": GHOST, "type": "DATASET"},
+    ]})
+
+    ctx = fetch_catalog_context([RAW, GHOST])
+
+    assert ctx[RAW].found is True
+    assert ctx[GHOST].found is False, "urn + type alone is a URN echo, not knowledge"
+    assert "not evidence the asset is registered" in ctx[GHOST].to_dict()["note"]
+
+
+def test_empty_fields_do_not_count_as_metadata(monkeypatch):
+    """A shell padded with nulls and empty containers is still a shell."""
+    _patch(monkeypatch, {"get_entities": [
+        {"urn": GHOST, "type": "DATASET", "properties": None, "tags": [],
+         "ownership": None, "description": ""},
+    ]})
+    assert fetch_catalog_context([GHOST])[GHOST].found is False
+
+
+def test_one_real_field_is_enough(monkeypatch):
+    """The test is 'carries any metadata', not 'carries a name'. An asset with
+    only an owner recorded is still an asset the catalog knows."""
+    _patch(monkeypatch, {"get_entities": [
+        {"urn": RAW, "type": "DATASET", "ownership": {"owners": [{"owner": {"urn": TEAM}}]}},
+    ]})
+    ctx = fetch_catalog_context([RAW])[RAW]
+    assert ctx.found is True
+    assert ctx.owners == [TEAM]
+
+
 def test_context_prefers_registered_name_over_display_name(monkeypatch):
     _patch(monkeypatch, {
         "get_entities": [{
