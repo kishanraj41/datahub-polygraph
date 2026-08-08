@@ -4,9 +4,9 @@ Polygraph reaches DataHub two ways: the `acryl-datahub` SDK, and **DataHub's own
 MCP Server** (`mcp-server-datahub`), launched as a stdio subprocess exactly the
 way an agent client launches it.
 
-This document records what works, what does not, and why — including a
-server-side bug that took a day to isolate and that also breaks DataHub's own
-UI.
+This document records what works, what does not, and why — including a failure
+that took most of a day to isolate, and a wrong diagnosis that is kept here on
+purpose because the way it was wrong is the useful part.
 
 ---
 
@@ -28,7 +28,7 @@ is exactly how it stays undiagnosed.
 
 ---
 
-## The blocker: point-in-time creation fails on the OSS quickstart
+## The blocker: a dead search container, misread as a config problem
 
 `get_lineage` returns HTTP 500:
 
@@ -45,67 +45,72 @@ The MCP Server sends an ordinary `searchAcrossLineage` query — degree filter,
 UI Lineage tab** sends. Reproduced independently of both, straight against
 GraphQL, by `scripts/probe_gms.py`.
 
-### Two candidate causes, and the test that separates them
+### Root cause: the search container was dead
 
-Recorded honestly, because the first diagnosis here was stated with more
-confidence than the evidence supported.
+`datahub-opensearch-1` had **exited (127)** while the rest of the stack stayed up
+for 45 hours. GMS reaches its search backend through the compose service alias
+`search`, so with the container gone:
 
-**Candidate A — dialect mismatch.** Two GMS defaults collide with how the
-quickstart is packaged: `ELASTICSEARCH_IMPLEMENTATION` defaults to
-`elasticsearch` and the quickstart compose file does not set it, while
-`ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED` defaults to `true`,
-so every graph query creates a point-in-time snapshot. If the backend is
-OpenSearch, GMS is calling the wrong endpoint: Elasticsearch exposes
-point-in-time at `POST /<index>/_pit`, OpenSearch at
-`POST /_search/point_in_time`.
-
-**Candidate B — the search backend is not reachable at all.** GMS answers
-`/config` and serves entity reads regardless, because those come from MySQL. A
-stack with no running search container looks healthy from the outside and fails
-every search and lineage query.
-
-**The discriminator: `searchAcrossEntities`.** Ordinary search uses no
-point-in-time and no graph traversal.
-
-| `searchAcrossLineage` | `searchAcrossEntities` | Diagnosis |
-|---|---|---|
-| 500 (PointInTime) | works | Candidate A — apply the fix below |
-| 500 (PointInTime) | also fails | Candidate B — the backend is down; the PIT error is a symptom |
-| works | works | nothing to fix |
-
-`scripts/probe_gms.py` runs both and prints the reading.
-`scripts/stack_status.ps1` lists every container, running or stopped, and
-checks `:9200`.
-
-Applying the Candidate A fix to a Candidate B stack changes a setting on a
-service whose actual problem is a missing peer, and wastes a GMS restart.
-
-### Fix for Candidate A
-
-```powershell
-.\scripts\probe_gms.ps1          # read-only diagnosis, changes nothing
-.\scripts\fix_gms_search.ps1     # applies ELASTICSEARCH_IMPLEMENTATION=opensearch
-.\scripts\fix_gms_search.ps1 -Mode revert
+```
+java.net.UnknownHostException: search
+    at ...OpenSearch2SearchClientShim.search(OpenSearch2SearchClientShim.java:312)
+    at ...ESSearchDAO.lambda$executeAndExtract$4(ESSearchDAO.java:259)
 ```
 
-`fix_gms_search.ps1` layers `docker/gms-search-override.yml` on top of the
-generated quickstart compose file and recreates **only** `datahub-gms`, with
-`--no-deps`. No volume is touched; the seeded catalog survives. Nothing the
-quickstart wrote is edited.
+`Root cause: search` in the original 500 was the **hostname**. It was never a
+subsystem name, and reading it as one cost most of a day.
 
-If the dialect fix alone does not clear it, `-Mode both` additionally sets
-`ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED=false`
-(`docker/gms-nopit-override.yml`). That is the blunter fix: point-in-time gives
-a lineage query a consistent view of the index while it pages, so disabling it
-trades a correctness guarantee for availability. Fine for a four-dataset demo
-catalog; not equivalent to the dialect fix, and not presented as such.
+A stack in this state looks healthy from every angle that matters to a casual
+check: GMS answers `/config`, reports `healthy` to Docker, serves every entity
+read, and passes every gate in this project except the two that need search.
+Metadata lives in MySQL; only the search and graph *indices* live in OpenSearch.
+
+### What this ruled out, recorded because it was asserted first
+
+This document previously claimed the cause was a dialect mismatch —
+`ELASTICSEARCH_IMPLEMENTATION` defaulting to `elasticsearch` against an
+OpenSearch backend. **That was wrong**, and the evidence against it was already
+in the stack trace: `OpenSearch2SearchClientShim` is the OpenSearch client. GMS
+1.7 auto-detects the engine and had detected it correctly the whole time.
+
+The mistake was reasoning from documentation (`ELASTICSEARCH_IMPLEMENTATION`
+defaults to `elasticsearch`; the quickstart runs OpenSearch; therefore mismatch)
+without checking the one fact that would have settled it — whether the search
+container was running. Two things would have caught it sooner, and both are now
+in the probe:
+
+* **`searchAcrossEntities` as a discriminator.** Ordinary search uses no
+  point-in-time. It failed too, which no dialect theory explains.
+* **Container-level facts before service-level theories.**
+  `scripts/stack_status.ps1` lists every container running *or stopped*. The
+  original probe only grepped `docker ps` for images, and reported
+  "no opensearch container found" as a footnote rather than as the answer.
+
+The fix scripts written for the wrong diagnosis (`fix_gms_search.ps1`,
+`docker/gms-*.yml`) have been deleted rather than kept "just in case". Shipping a
+remedy for a cause that did not exist is how a repo teaches its next reader the
+wrong lesson.
+
+### Fix
+
+```powershell
+.\scripts\stack_status.ps1        # read-only: what is actually running
+.\scripts\fix_search_backend.ps1  # capture why it died, start it, restart GMS, re-probe
+```
+
+`fix_search_backend.ps1` reads the dead container's logs *before* restarting it —
+a container killed for disk or memory will die again, and finding that out
+mid-demo is worse than finding it out now. If the indices did not survive, it
+prints the `system-update` command that rebuilds them from MySQL.
 
 ### Consequence for the default
 
 `polygraph reconcile` defaults to `--declared-via sdk`, **not** `mcp`. The
-default has to be the path that works on a clean clone against a stock
-quickstart, because that is what a judge will run. `--declared-via mcp` is
-available and gate-tested, and needs the environment fix above.
+default has to survive a partly-degraded stack: the SDK path reads the
+`dataJobInputOutput` aspect from MySQL and kept working throughout the outage,
+while every search-backed path was down. That is not a preference for the SDK
+as an interface — it is a preference for the default that still answers when
+something is broken.
 
 ---
 

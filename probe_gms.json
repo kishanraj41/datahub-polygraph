@@ -1,17 +1,72 @@
 {
   "lineage": {
-    "ok": false,
-    "kind": "pit",
-    "detail": "Failed to generate PointInTime Identifier.. Root cause: search",
+    "ok": true,
+    "kind": "ok",
     "data": {
-      "searchAcrossLineage": null
+      "searchAcrossLineage": {
+        "total": 2,
+        "searchResults": [
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+              "type": "DATASET"
+            },
+            "degree": 1
+          },
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)",
+              "type": "DATASET"
+            },
+            "degree": 1
+          }
+        ]
+      }
     }
   },
   "entities": {
-    "ok": false,
-    "kind": "graphql",
-    "detail": "Validation error (FieldUndefined@[entities/ownership/owners/owner/urn]) : Field 'urn' in type 'OwnerType' is undefined | Validation error (FieldUndefined@[entities/ownership/owners/owner/urn]) : Field 'urn' in type 'OwnerType' is undefined",
-    "data": null
+    "ok": true,
+    "kind": "ok",
+    "data": {
+      "entities": [
+        {
+          "urn": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+          "type": "DATA_JOB",
+          "jobId": "train_fraud_model",
+          "properties": {
+            "name": "train_fraud_model",
+            "description": "Trains the fraud classifier and writes scored predictions."
+          },
+          "ownership": {
+            "owners": [
+              {
+                "owner": {
+                  "urn": "urn:li:corpGroup:ml-platform-team"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)",
+          "type": "DATASET",
+          "name": "polygraph.demo.raw_claims",
+          "properties": {
+            "name": "polygraph.demo.raw_claims",
+            "description": "Raw fraud claims, one row per claim. Declared input to the training job and genuinely read by it."
+          },
+          "ownership": {
+            "owners": [
+              {
+                "owner": {
+                  "urn": "urn:li:corpGroup:ml-platform-team"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
   },
   "inputOutput": {
     "ok": true,
@@ -38,11 +93,44 @@
     }
   },
   "search": {
-    "ok": false,
-    "kind": "graphql",
-    "detail": "java.lang.RuntimeException: Failed to execute search: entity types [DATASET], query polygraph, filters: null, start: 0, count: 10. Root cause: Failed to execute search: entity types [DATASET], query polygraph, filters: null, start: 0, count: 10. Search query failed:. search",
+    "ok": true,
+    "kind": "ok",
     "data": {
-      "searchAcrossEntities": null
+      "searchAcrossEntities": {
+        "total": 5,
+        "searchResults": [
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.smoke_test,PROD)",
+              "type": "DATASET"
+            }
+          },
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+              "type": "DATASET"
+            }
+          },
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)",
+              "type": "DATASET"
+            }
+          },
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)",
+              "type": "DATASET"
+            }
+          },
+          {
+            "entity": {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fraud_predictions,PROD)",
+              "type": "DATASET"
+            }
+          }
+        ]
+      }
     }
   }
 }

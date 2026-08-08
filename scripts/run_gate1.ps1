@@ -148,7 +148,16 @@ for ($i = 1; $i -le 60; $i++) {
     Start-Sleep -Seconds 5
 }
 if (-not $gmsReady) {
-    Run "gms container logs" "docker logs --tail 60 datahub-gms"
+    # Resolved by pattern: the quickstart pins no container_name, so the real
+    # name is <project>-<service>-<n>. Hardcoding "datahub-gms" meant this
+    # diagnostic silently printed nothing at the one moment it was needed.
+    $gmsName = (docker ps -a --format "{{.Names}}" 2>$null | Select-String -Pattern "gms" | Select-Object -First 1)
+    if ($gmsName) {
+        Run "gms container logs" "docker logs --tail 60 $($gmsName.ToString().Trim())"
+    } else {
+        Log "No container matching 'gms' exists. Run scripts\stack_status.ps1."
+    }
+    Run "all containers" "docker ps -a --format '{{.Names}}`t{{.State}}`t{{.Status}}'"
     Die "GMS never answered on http://localhost:8080/config. The container logs above are the place to look."
 }
 Log "GMS is up."

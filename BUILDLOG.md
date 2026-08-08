@@ -146,3 +146,63 @@ does not know comes back `found: false` rather than vanishing, because otherwise
 
 78 tests passing, 2 skipped (the live-capture oracle pair, which run on the
 box with DataHub).
+
+## 2026-08-08 — the search container was dead, and I diagnosed it wrong first
+
+`searchAcrossLineage` returned a 500: `Failed to generate PointInTime
+Identifier.. Root cause: search`. I read DataHub's env-var reference, found that
+`ELASTICSEARCH_IMPLEMENTATION` defaults to `elasticsearch` while the quickstart
+runs OpenSearch, and that graph queries create a point-in-time snapshot by
+default — and wrote that up as the cause, with a fix script and two compose
+overrides. Confidently. In the README.
+
+It was wrong. `datahub-opensearch-1` had exited (127) while everything else
+stayed up for 45 hours, and GMS could not resolve the compose alias `search`:
+
+```
+java.net.UnknownHostException: search
+    at ...OpenSearch2SearchClientShim.search(...)
+```
+
+`Root cause: search` was the **hostname**. And `OpenSearch2SearchClientShim` in
+GMS's own stack trace says it had detected OpenSearch correctly all along, so
+the dialect theory was contradicted by evidence that was already on screen.
+
+What actually went wrong in my reasoning: I reasoned from documentation to a
+plausible mechanism, and never checked the cheapest fact that would have settled
+it — whether the container was running. The original probe did grep `docker ps`
+and did report "no opensearch/elasticsearch container found", and I treated that
+as a naming quirk rather than as the answer.
+
+Two changes so the next one lands faster:
+
+* **`searchAcrossEntities` is now a probe, and the discriminator.** Ordinary
+  search uses no point-in-time. It was failing too, which no dialect theory
+  explains. One extra query would have killed the wrong hypothesis immediately.
+* **`scripts/stack_status.ps1`** — container-level facts before service-level
+  theories. Every container running *or stopped*, compose projects, which
+  container owns each port, and whether `container_name` is pinned.
+
+That last one found a second latent bug: the quickstart pins no
+`container_name`, so containers are `datahub-<service>-quickstart-1`, and every
+script here that said `docker ... datahub-gms` was addressing nothing. Including
+`run_gate1.ps1`'s log dump, which would have printed nothing at the exact moment
+it was needed. Now resolved by pattern.
+
+The fix scripts written for the wrong diagnosis are deleted, not kept "just in
+case". A repo that ships a remedy for a cause that never existed teaches its next
+reader the wrong lesson. What is kept is the account of being wrong, in
+`docs/DATAHUB_MCP.md`.
+
+Also fixed, from the same run: `server_env` set `DATAHUB_GMS_URL` only when a
+caller passed one, so the MCP subprocess started with no credentials, died on
+`MissingConfigError`, and surfaced as `McpError: Connection closed` — an
+infrastructure failure wearing a protocol failure's clothes. `resolve_gms()` now
+always produces a URL and `preflight()` checks GMS before launching.
+`tests/test_dh_mcp.py` holds the regressions. 89 tests, 2 skipped.
+
+Worth stating plainly: nothing about the demo path broke during any of this.
+`verify.ps1` went green from a fresh clone with OpenSearch dead — F1
+`0.8282290279627164`, verdicts 1/1/1, digest `acbedff4…` — because every step of
+it reads aspects from MySQL. That is a real property of the design, not luck,
+but it is also exactly why the outage went unnoticed for 17 hours.

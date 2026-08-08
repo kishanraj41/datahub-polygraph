@@ -1,0 +1,64 @@
+{
+  "source": "mcp-server-datahub",
+  "tools_used": [
+    "get_entities",
+    "search"
+  ],
+  "assets": [
+    {
+      "urn": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+      "found": true,
+      "name": "train_fraud_model",
+      "description": "Trains the fraud classifier and writes scored predictions.",
+      "owners": [
+        "urn:li:corpGroup:ml-platform-team"
+      ],
+      "source": "mcp-server-datahub:get_entities",
+      "note": "The catalog's own claim about this asset. Polygraph does not verify ownership or descriptions -- only lineage."
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)",
+      "found": true,
+      "name": "polygraph.demo.raw_claims",
+      "description": "Raw fraud claims, one row per claim. Declared input to the training job and genuinely read by it.",
+      "owners": [
+        "urn:li:corpGroup:ml-platform-team"
+      ],
+      "source": "mcp-server-datahub:get_entities",
+      "note": "The catalog's own claim about this asset. Polygraph does not verify ownership or descriptions -- only lineage."
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+      "found": true,
+      "name": "polygraph.demo.fee_schedule",
+      "description": "Per-region fee lookup. Registered as an asset. NOT declared as an input to the training job -- which is the point: the pipeline reads it anyway.",
+      "owners": [
+        "urn:li:corpGroup:ml-platform-team"
+      ],
+      "source": "mcp-server-datahub:get_entities",
+      "note": "The catalog's own claim about this asset. Polygraph does not verify ownership or descriptions -- only lineage."
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.does_not_exist,PROD)",
+      "found": true,
+      "name": null,
+      "description": null,
+      "owners": [],
+      "source": "mcp-server-datahub:get_entities",
+      "note": "The catalog's own claim about this asset. Polygraph does not verify ownership or descriptions -- only lineage."
+    }
+  ],
+  "search": {
+    "query": "/q fee+schedule",
+    "source": "mcp-server-datahub:search",
+    "count": 1,
+    "hits": [
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fee_schedule,PROD)",
+        "kind": "dataset",
+        "name": "polygraph.demo.fee_schedule"
+      }
+    ],
+    "note": "Catalog registrations only. A hit means DataHub knows the asset; it says nothing about whether any lineage edge to it is declared or real."
+  }
+}

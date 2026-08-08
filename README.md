@@ -237,16 +237,19 @@ Three MCP tools are used:
 | `search` | is this undeclared source registered at all | `polygraph catalog --search`, `ask --llm` |
 | `get_lineage` | what does the catalog say feeds this job | `reconcile --declared-via mcp` |
 
-`get_lineage` is **not** the default path, and the reason is worth stating
-plainly: on the stack this was built against, it returns a 500 —
-`Failed to generate PointInTime Identifier`, from GMS, on `searchAcrossLineage`.
-That is not specific to Polygraph or to the MCP Server; the same query backs
-**DataHub's own UI Lineage tab**, so a stack that cannot serve one cannot serve
-the other. `scripts/probe_gms.ps1` reproduces it straight against GraphQL, and
-[`docs/DATAHUB_MCP.md`](docs/DATAHUB_MCP.md) sets out the two candidate causes
-and the test that tells them apart. The default stays on the SDK because a judge
-cloning this repo should get a working run without first having to debug their
-search backend.
+`get_lineage` is **not** the default path. The reason is a story worth keeping:
+on the stack this was built against it returned a 500 from GMS, and the first
+diagnosis written here — a search-dialect misconfiguration — was **wrong**. The
+OpenSearch container had simply died, and GMS could not resolve the hostname
+`search`. A DataHub stack in that state answers `/config`, reports healthy,
+serves every entity read, and fails only the queries that need search. See
+[`docs/DATAHUB_MCP.md`](docs/DATAHUB_MCP.md) for the full account, including what
+would have caught it sooner.
+
+The default stays on the SDK for the reason that outage demonstrated: it reads
+the `dataJobInputOutput` aspect from MySQL and kept working the whole time, while
+every search-backed path was down. A default should be the one that still answers
+when something is broken.
 
 When the MCP lineage path *does* work, `scripts/run_gate10.ps1` reconciles twice,
 once per path, and fails if the per-edge verdicts differ. Matching totals with
@@ -348,12 +351,11 @@ about what it cannot do.
   `isinstance(path, str)`, so `pd.read_csv(Path(...))` records *nothing* — no
   file lineage at all, silently. `demo/pipeline.py` passes `str(...)`
   explicitly. This is an upstream bug, not a design choice.
-- **Lineage queries fail on the stack this was built against.** Every
-  `searchAcrossLineage` call 500s on point-in-time creation, which breaks
-  `reconcile --declared-via mcp` *and* DataHub's own UI Lineage tab. Not a
-  Polygraph bug, but Polygraph has to live with it: the default declared-lineage
-  path is the SDK. `scripts/probe_gms.ps1` and `scripts/stack_status.ps1`
-  diagnose; `docs/DATAHUB_MCP.md` explains what is and is not yet established.
+- **Everything search-backed depends on a healthy OpenSearch.** That includes
+  `reconcile --declared-via mcp`, `polygraph catalog --search`, the
+  `datahub_search` agent tool, and DataHub's own UI search and Lineage tab. When
+  OpenSearch is down the rest of DataHub keeps answering, so this is easy to
+  mistake for a Polygraph bug. `scripts/stack_status.ps1` settles it in seconds.
 - **DataHub's MCP Server cannot report declared job inputs.** Its GraphQL
   documents never request `DataJob.inputOutput`. So even with the point-in-time
   bug fixed, the only MCP route to declared lineage is `get_lineage`, which
