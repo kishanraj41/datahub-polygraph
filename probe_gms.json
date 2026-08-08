@@ -2,7 +2,7 @@
   "lineage": {
     "ok": false,
     "kind": "pit",
-    "detail": "Failed to generate PointInTime Identifier.. Root cause: search: Name or service not known",
+    "detail": "Failed to generate PointInTime Identifier.. Root cause: search",
     "data": {
       "searchAcrossLineage": null
     }
