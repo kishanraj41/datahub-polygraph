@@ -141,6 +141,7 @@ $g2 = RunScript "3" "gates 2-7 (seed, capture, reconcile, writeback)" "run_gate2
 $g3 = RunScript "3" "gate 6 (incident path)" "run_gate3.ps1"
 $g8 = RunScript "4" "gate 8 (MCP over stdio)" "run_gate8.ps1"
 $g9 = RunScript "5" "gate 9 (proposals + revert)" "run_gate9.ps1"
+$g10 = RunScript "5" "gate 10 (declared lineage via DataHub's MCP Server)" "run_gate10.ps1"
 
 # ============================================ 6. the fresh-clone gate
 $gv = RunScript "6" "fresh clone reproduces the README" "verify.ps1"

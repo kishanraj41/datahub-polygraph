@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import ask as ask_mod
 from . import declared as declared_mod
+from . import declared_mcp
 from . import incident as incident_mod
 from . import propose as propose_mod
 from . import reconcile as rec
@@ -53,13 +54,26 @@ def cmd_observe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_declared(args: argparse.Namespace):
+    """Read the catalog's claim, via DataHub's MCP Server or the SDK.
+
+    MCP is the default: it is the interface DataHub offers to agents, so it is
+    the answer an agent would actually get. The SDK path remains available
+    because it reads the aspect directly and is the oracle Gate 10 compares
+    against.
+    """
+    if args.declared_via == "mcp":
+        return declared_mcp.fetch_declared_via_mcp(args.job, args.gms, args.token)
+    graph = declared_mod.connect(args.gms, args.token)
+    return declared_mod.fetch_declared(graph, args.job)
+
+
 def _build_report(args: argparse.Namespace) -> dict:
     observed = json.loads(Path(args.observed).read_text(encoding="utf-8"))
     urn_map = UrnMap.load(args.urn_map)
     mapped, unmapped = urn_map.map_graph(observed)
 
-    graph = declared_mod.connect(args.gms, args.token)
-    lineage = declared_mod.fetch_declared(graph, args.job)
+    lineage = _fetch_declared(args)
 
     return rec.reconcile(
         declared=lineage.edges,
@@ -72,6 +86,11 @@ def _build_report(args: argparse.Namespace) -> dict:
 
 def cmd_reconcile(args: argparse.Namespace) -> int:
     report = _build_report(args)
+    report["declared_source"] = (
+        "mcp-server-datahub (DataHub MCP Server)" if args.declared_via == "mcp"
+        else "acryl-datahub SDK"
+    )
+    print(f"declared lineage read via: {report['declared_source']}\n")
 
     json_path = Path(args.out_json)
     md_path = Path(args.out_md)
@@ -359,6 +378,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--job", default=DEFAULT_JOB)
     r.add_argument("--out-json", default="examples/reconciliation_report.json")
     r.add_argument("--out-md", default="examples/reconciliation_report.md")
+    r.add_argument(
+        "--declared-via",
+        choices=["mcp", "sdk"],
+        default="mcp",
+        help="read declared lineage through DataHub's MCP Server (default) or the "
+             "acryl-datahub SDK. Gate 10 asserts both produce identical verdicts.",
+    )
     r.add_argument(
         "--allow-discrepancies",
         action="store_true",

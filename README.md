@@ -79,6 +79,8 @@ python -m polygraph.cli observe \
     --out   runs/healthy/observed_graph.json --root .
 
 # 5. Reconcile declared against observed
+#    Reads the catalog's claim through DataHub's own MCP Server by default.
+#    Use --declared-via sdk to read the aspect directly instead.
 python -m polygraph.cli reconcile --observed runs/healthy/observed_graph.json
 
 # 6. Write the verdicts back into DataHub
@@ -214,6 +216,26 @@ answer from what they return. Needs `ANTHROPIC_API_KEY` and `pip install
 anthropic`. Gated behind a flag on purpose: a judge should never need
 credentials to verify a documented result. Without a key it says so plainly
 rather than degrading into something else.
+
+### Two ways to read the catalog's claim
+
+`reconcile` reads declared lineage through **DataHub's MCP Server**
+(`mcp-server-datahub`, launched as a stdio subprocess) by default, and through
+the `acryl-datahub` SDK with `--declared-via sdk`.
+
+That is deliberate rather than decorative. Polygraph's argument is about what a
+catalog tells the people and agents who ask it — so it should check the answer
+DataHub actually gives an agent, not a different answer obtained by reading the
+aspect directly. The SDK path stays because it *is* that direct read, which
+makes it a usable oracle: `scripts/run_gate10.ps1` reconciles twice, once per
+path, and fails if the per-edge verdicts differ. Matching totals with differing
+edges fails too — a summary-only check would let that through.
+
+The MCP response is parsed by walking the payload for dataset URNs rather than
+indexing a fixed path. A hard-coded path would break silently on a server
+upgrade and return an empty upstream set, which Polygraph would then report as a
+catalog full of phantom edges: confidently wrong, in the exact way this project
+exists to catch. An empty result therefore raises instead of producing verdicts.
 
 ---
 
