@@ -79,10 +79,8 @@ def test_empty_upstreams_raises_rather_than_reporting_all_phantom(monkeypatch):
     import polygraph.declared_mcp as mod
 
     monkeypatch.setattr(
-        mod, "_fetch", lambda *a, **k: None
-    )  # not used; asyncio.run is patched below
-    monkeypatch.setattr(
-        mod.asyncio, "run", lambda coro: {"tools": ["get_lineage"], "payload": {"upstreams": {}}}
+        mod, "_run_fetch",
+        lambda *a, **k: {"tools": ["get_lineage"], "payload": {"upstreams": {}}},
     )
 
     with pytest.raises(McpLineageError) as exc:
@@ -99,7 +97,7 @@ def test_successful_read_builds_declared_edges(monkeypatch):
     payload = {"upstreams": {"searchResults": [
         {"entity": {"urn": RAW}}, {"entity": {"urn": ARCHIVE}}]}}
     monkeypatch.setattr(
-        mod.asyncio, "run", lambda coro: {"tools": ["get_lineage"], "payload": payload}
+        mod, "_run_fetch", lambda *a, **k: {"tools": ["get_lineage"], "payload": payload}
     )
 
     lineage = fetch_declared_via_mcp(JOB)
@@ -109,16 +107,37 @@ def test_successful_read_builds_declared_edges(monkeypatch):
     assert lineage.raw["source"] == "mcp-server-datahub"
 
 
+def test_server_command_prefers_the_current_interpreter():
+    """Launching by bare console-script name fails on Windows with WinError 2:
+    CreateProcess does not search PATH and a venv's Scripts dir is not on the
+    subprocess PATH. Running as a module through sys.executable avoids that and
+    keeps the server in the same venv as Polygraph."""
+    import sys as _sys
+
+    from polygraph.declared_mcp import resolve_server_command
+
+    argv = resolve_server_command()
+    assert argv[0] == _sys.executable
+    assert argv[1:3] == ["-m", "mcp_server_datahub"]
+
+
+def test_server_command_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("POLYGRAPH_MCP_SERVER_CMD", "/opt/custom/mcp-server-datahub --flag")
+    from polygraph.declared_mcp import resolve_server_command
+
+    assert resolve_server_command() == ["/opt/custom/mcp-server-datahub", "--flag"]
+
+
 def test_missing_tool_is_reported_with_the_advertised_list(monkeypatch):
     """A version-gated server that hides get_lineage must say so plainly."""
     import polygraph.declared_mcp as mod
 
-    def boom(coro):
+    def boom(*a, **k):
         raise mod.McpLineageError(
             "DataHub's MCP Server did not advertise a `get_lineage` tool. "
             "Advertised: ['search']. Check the GMS version"
         )
 
-    monkeypatch.setattr(mod.asyncio, "run", boom)
+    monkeypatch.setattr(mod, "_run_fetch", boom)
     with pytest.raises(McpLineageError, match="did not advertise"):
         fetch_declared_via_mcp(JOB)
