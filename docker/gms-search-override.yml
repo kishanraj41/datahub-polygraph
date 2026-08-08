@@ -1,0 +1,26 @@
+# Compose override: make GMS speak OpenSearch's dialect.
+#
+# The DataHub OSS quickstart runs OpenSearch, but datahub-gms ships with
+# ELASTICSEARCH_IMPLEMENTATION defaulting to `elasticsearch`. Graph (lineage)
+# queries create a point-in-time snapshot by default
+# (ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED=true), and the
+# Elasticsearch `_pit` endpoint does not exist on OpenSearch, which answers on
+# `_search/point_in_time`. The result is a 500 on every lineage query:
+#
+#     Failed to generate PointInTime Identifier.. Root cause: search
+#     path: ['searchAcrossLineage']
+#
+# That resolver backs both DataHub's own UI Lineage tab and the MCP Server's
+# `get_lineage` tool, so the symptom is not specific to Polygraph.
+#
+# Applied as an OVERRIDE rather than an edit to the generated quickstart file:
+# nothing the quickstart wrote is modified, only this one environment variable
+# is layered on top, and reverting is `docker compose up -d` without this file.
+#
+# Applied by scripts/fix_gms_search.ps1. Not used by the demo itself -- if your
+# stack already answers lineage queries, you do not need this.
+
+services:
+  datahub-gms:
+    environment:
+      ELASTICSEARCH_IMPLEMENTATION: opensearch

@@ -10,13 +10,21 @@ silently answers a different question than the one asked is worse than one that
 declines.
 
 **LLM (``--llm``).** A real tool-use loop against the Anthropic API. The model
-gets the same six functions the MCP server exposes, decides which to call, and
-writes the answer from what they return. Requires ``ANTHROPIC_API_KEY``. It is
-gated behind a flag rather than being the default precisely so that a judge
-cloning the repo can reproduce every documented result without credentials.
+gets the six functions Polygraph's own MCP server exposes **plus two tools that
+proxy to DataHub's MCP Server**, decides which to call, and writes the answer
+from what they return. Requires ``ANTHROPIC_API_KEY``. It is gated behind a flag
+rather than being the default precisely so that a judge cloning the repo can
+reproduce every documented result without credentials.
 
-Both backends call ``polygraph.tools``. There is one implementation of "can I
-trust this asset", not two.
+Why two servers in one loop. Polygraph's tools return *evidence* -- what a
+runtime capture proved. DataHub's tools return *testimony* -- what the catalog
+claims. The interesting questions need both: "this undeclared source is real,
+is it registered in the catalog under some other name?" is a Polygraph verdict
+followed by a DataHub search. Composing them is the point, and keeping the two
+kinds of answer distinguishable is the discipline -- see rule 6 in ``SYSTEM``.
+
+Both backends call ``polygraph.tools`` for the evidence side. There is one
+implementation of "can I trust this asset", not two.
 """
 
 from __future__ import annotations
@@ -243,6 +251,54 @@ def _short(urn: str) -> str:
 # LLM backend
 # --------------------------------------------------------------------------
 
+# --- tools that proxy to DataHub's MCP Server ----------------------------
+# Imported lazily: the deterministic backend is the default and must not pay
+# for fastmcp, nor require DataHub to be reachable.
+#
+# Deliberately NOT added to polygraph.tools. That module is Polygraph's own
+# query surface and is mirrored one-for-one by Polygraph's MCP server; putting
+# DataHub's tools in it would have Polygraph's server re-advertise another
+# server's tools as its own.
+
+def _datahub_get_entities(urns: list[str]) -> dict:
+    """Ask DataHub's catalog what it knows about these assets: registered name,
+    description, and owning team.
+
+    This is the catalog's TESTIMONY, read through DataHub's MCP Server. It is
+    not evidence and Polygraph does not verify it. Use it to name a responsible
+    team or to quote how an asset is described, never to support a claim about
+    what a pipeline actually did.
+
+    Args:
+        urns: DataHub URNs to look up.
+    """
+    from . import catalog_mcp
+
+    context = catalog_mcp.fetch_catalog_context(urns)
+    return {
+        "source": "mcp-server-datahub:get_entities",
+        "assets": [c.to_dict() for c in context.values()],
+    }
+
+
+def _datahub_search(query: str) -> dict:
+    """Search DataHub's catalog for registered assets, through DataHub's MCP Server.
+
+    The question this is for: Polygraph reports an UNDECLARED source -- runtime
+    proved the pipeline reads it, the catalog never declared the edge. Is the
+    asset registered in the catalog at all, under some name? A hit means the
+    catalog knows the asset but not the edge. A miss means the asset is
+    invisible to the catalog entirely, which is worse.
+
+    Args:
+        query: Search text. DataHub's structured syntax works: prefix with /q
+            for boolean queries, e.g. "/q fee+schedule".
+    """
+    from . import catalog_mcp
+
+    return catalog_mcp.search_catalog(query)
+
+
 TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     "can_i_trust": tools.can_i_trust,
     "get_integrity_score": tools.get_integrity_score,
@@ -250,6 +306,8 @@ TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     "list_phantom_edges": tools.list_phantom_edges,
     "get_incident_report": tools.get_incident_report,
     "explain_verdict_semantics": tools.explain_verdict_semantics,
+    "datahub_get_entities": _datahub_get_entities,
+    "datahub_search": _datahub_search,
 }
 
 TOOL_SCHEMAS = [
@@ -294,12 +352,45 @@ TOOL_SCHEMAS = [
         "description": tools.explain_verdict_semantics.__doc__,
         "input_schema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "datahub_get_entities",
+        "description": _datahub_get_entities.__doc__,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "urns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "DataHub URNs to look up.",
+                }
+            },
+            "required": ["urns"],
+        },
+    },
+    {
+        "name": "datahub_search",
+        "description": _datahub_search.__doc__,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search text."},
+            },
+            "required": ["query"],
+        },
+    },
 ]
 
 SYSTEM = (
-    "You answer questions about whether a DataHub catalog's lineage can be trusted, "
-    "using Polygraph's tools. Polygraph compares what a catalog CLAIMS against what a "
-    "pipeline's runtime actually DID.\n\n"
+    "You answer questions about whether a DataHub catalog's lineage can be trusted. "
+    "Polygraph compares what a catalog CLAIMS against what a pipeline's runtime "
+    "actually DID.\n\n"
+    "You have tools from two servers:\n"
+    "  * Polygraph's tools (can_i_trust, get_integrity_score, list_undeclared_sources, "
+    "list_phantom_edges, get_incident_report, explain_verdict_semantics) return "
+    "EVIDENCE -- what a runtime capture proved.\n"
+    "  * DataHub's tools (datahub_get_entities, datahub_search), which reach the "
+    "catalog through DataHub's own MCP Server, return TESTIMONY -- what the catalog "
+    "claims. Polygraph has not verified any of it.\n\n"
     "Rules you must follow:\n"
     "1. Answer only from tool results. Never fill gaps from general knowledge about "
     "DataHub or ML pipelines.\n"
@@ -309,7 +400,11 @@ SYSTEM = (
     "Do not present absence of findings as a clean result.\n"
     "4. Quote the concrete numbers and operation names the tools return. A reader should be "
     "able to disagree with your conclusion from the evidence you showed.\n"
-    f"5. The demo's training job URN is {tools.DEFAULT_JOB}\n"
+    "5. Keep the two kinds of answer distinguishable. Say 'the catalog says' for anything "
+    "from a datahub_* tool and 'Polygraph observed' for anything from a Polygraph tool. "
+    "Never let a catalog description stand in for evidence about what ran -- the gap "
+    "between those two is the entire subject.\n"
+    f"6. The demo's training job URN is {tools.DEFAULT_JOB}\n"
     "Be concise."
 )
 

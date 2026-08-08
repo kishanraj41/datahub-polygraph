@@ -79,9 +79,11 @@ python -m polygraph.cli observe \
     --out   runs/healthy/observed_graph.json --root .
 
 # 5. Reconcile declared against observed
-#    Reads the catalog's claim through DataHub's own MCP Server by default.
-#    Use --declared-via sdk to read the aspect directly instead.
 python -m polygraph.cli reconcile --observed runs/healthy/observed_graph.json
+
+# 5b. Read catalog context (owners, descriptions, search) through DataHub's
+#     own MCP Server. Optional; needs DataHub running.
+python -m polygraph.cli catalog --search "/q fee+schedule"
 
 # 6. Write the verdicts back into DataHub
 python -m polygraph.cli writeback \
@@ -217,25 +219,53 @@ anthropic`. Gated behind a flag on purpose: a judge should never need
 credentials to verify a documented result. Without a key it says so plainly
 rather than degrading into something else.
 
-### Two ways to read the catalog's claim
+### Talking to DataHub through DataHub's own MCP Server
 
-`reconcile` reads declared lineage through **DataHub's MCP Server**
-(`mcp-server-datahub`, launched as a stdio subprocess) by default, and through
-the `acryl-datahub` SDK with `--declared-via sdk`.
+Polygraph reaches DataHub two ways: the `acryl-datahub` SDK, and
+**`mcp-server-datahub`** — DataHub's own MCP Server, launched as a stdio
+subprocess exactly the way an agent client launches it.
 
 That is deliberate rather than decorative. Polygraph's argument is about what a
-catalog tells the people and agents who ask it — so it should check the answer
-DataHub actually gives an agent, not a different answer obtained by reading the
-aspect directly. The SDK path stays because it *is* that direct read, which
-makes it a usable oracle: `scripts/run_gate10.ps1` reconciles twice, once per
-path, and fails if the per-edge verdicts differ. Matching totals with differing
-edges fails too — a summary-only check would let that through.
+catalog tells the people and agents who ask it, so it should be checking the
+answer DataHub actually gives an agent.
 
-The MCP response is parsed by walking the payload for dataset URNs rather than
-indexing a fixed path. A hard-coded path would break silently on a server
-upgrade and return an empty upstream set, which Polygraph would then report as a
-catalog full of phantom edges: confidently wrong, in the exact way this project
-exists to catch. An empty result therefore raises instead of producing verdicts.
+Three MCP tools are used:
+
+| Tool | What Polygraph asks it | Where |
+|---|---|---|
+| `get_entities` | who owns this asset, how is it described | `polygraph catalog`, `ask --llm` |
+| `search` | is this undeclared source registered at all | `polygraph catalog --search`, `ask --llm` |
+| `get_lineage` | what does the catalog say feeds this job | `reconcile --declared-via mcp` |
+
+`get_lineage` is **not** the default path, and the reason is worth stating
+plainly: on a stock DataHub OSS quickstart it returns a 500. GMS defaults to the
+Elasticsearch dialect (`ELASTICSEARCH_IMPLEMENTATION=elasticsearch`) while the
+quickstart runs OpenSearch, and graph queries create a point-in-time snapshot by
+default — so GMS sends an Elasticsearch `_pit` call to a server that does not
+have that endpoint. This is not specific to Polygraph or to the MCP Server; the
+same query backs **DataHub's own UI Lineage tab**. `scripts/probe_gms.ps1`
+diagnoses it, `scripts/fix_gms_search.ps1` fixes it, and
+[`docs/DATAHUB_MCP.md`](docs/DATAHUB_MCP.md) documents both. The default stays on
+the SDK because a judge cloning this repo should get a working run without first
+reconfiguring their search backend.
+
+When the MCP lineage path *does* work, `scripts/run_gate10.ps1` reconciles twice,
+once per path, and fails if the per-edge verdicts differ. Matching totals with
+differing edges fails too — a summary-only check would let that through.
+
+Every MCP response is parsed by **walking** the payload rather than indexing a
+fixed path. A hard-coded path would break silently on a server upgrade: an empty
+upstream set would make Polygraph report a catalog full of phantom edges, and a
+missing `ownership` node would make it report an unowned asset. Confidently
+wrong, in the exact way this project exists to catch. An empty lineage result
+raises instead of producing verdicts, and a URN the catalog does not know comes
+back marked `found: false` rather than silently disappearing.
+
+A second finding, separate from the point-in-time bug: the MCP Server **cannot**
+report a data job's declared inputs at all. `inputOutput` / `inputDatasets` /
+`outputDatasets` appear in none of its GraphQL documents, though GMS exposes
+`DataJob.inputOutput` — verified by `scripts/probe_gms.py`. That is a one-field
+upstream fix, not a DataHub limitation.
 
 ---
 
@@ -319,6 +349,21 @@ about what it cannot do.
   `isinstance(path, str)`, so `pd.read_csv(Path(...))` records *nothing* — no
   file lineage at all, silently. `demo/pipeline.py` passes `str(...)`
   explicitly. This is an upstream bug, not a design choice.
+- **Lineage queries fail on a stock OSS quickstart.** GMS defaults to the
+  Elasticsearch dialect while the quickstart runs OpenSearch, so every
+  `searchAcrossLineage` call 500s on point-in-time creation — which breaks
+  `reconcile --declared-via mcp` *and* DataHub's own UI Lineage tab. Not a
+  Polygraph bug, but Polygraph has to live with it: the default declared-lineage
+  path is the SDK. `scripts/probe_gms.ps1` diagnoses,
+  `scripts/fix_gms_search.ps1` fixes, `docs/DATAHUB_MCP.md` explains.
+- **DataHub's MCP Server cannot report declared job inputs.** Its GraphQL
+  documents never request `DataJob.inputOutput`. So even with the point-in-time
+  bug fixed, the only MCP route to declared lineage is `get_lineage`, which
+  reports the *rendered* graph rather than the asserted aspect.
+- **Catalog context is unverified.** `polygraph catalog` and the `datahub_*`
+  agent tools report owners and descriptions as the catalog states them.
+  Polygraph verifies lineage and nothing else — an owner field can be as stale
+  as an edge, and Polygraph will not tell you.
 - **Python 3.12 is untested by DataHub.** The CLI warns. It worked throughout
   this build, but 3.11 is the supported version.
 - **One pipeline, one catalog shape.** The URN mapping is explicit YAML. Using

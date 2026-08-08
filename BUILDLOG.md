@@ -71,3 +71,78 @@ digest published to DataHub was `743b60da...`.
 Fixed by routing every artifact write through `fsutil.write_text_lf`, adding
 `.gitattributes` with LF pinned, and adding `tests/test_digest_integrity.py`
 which fails if CRLF ever reaches an artifact whose hash is published.
+
+## 2026-08-08 — Phase 10: DataHub's MCP Server, and a GMS bug found the hard way
+
+Eligibility gap, found by re-reading the rules: the hackathon requires the OSS
+platform **together with** at least one of the MCP Server, Agent Context Kit,
+DataHub Skills or the Analytics Agent. Polygraph shipped its own MCP server and
+had `mcp-server-datahub` in `requirements.txt` — but never imported it. Shipping
+an MCP server is not the same as using DataHub's.
+
+First attempt read declared lineage through `get_lineage`. Two reds.
+
+**Red 1 — `[WinError 2]`.** Launching by bare console-script name fails on
+Windows: `CreateProcess` does not search PATH the way a shell does, and a venv's
+`Scripts` directory is not on the subprocess PATH. Fixed by launching as
+`sys.executable -m mcp_server_datahub`, which also guarantees the server runs in
+the same venv, so it sees the same credentials and the same pinned SDK.
+
+**Red 2 — a 500 from GMS.**
+
+```
+Failed to generate PointInTime Identifier.. Root cause: search
+path: ['searchAcrossLineage']
+```
+
+Isolated it by reading the MCP Server's source rather than guessing: its
+`get_lineage` sends an ordinary `searchAcrossLineage` query — degree filter,
+count, skipHighlighting — which is the same query **DataHub's own UI Lineage
+tab** sends. So the fault is neither ours nor the MCP Server's.
+
+Root cause, from DataHub's env-var reference: `ELASTICSEARCH_IMPLEMENTATION`
+defaults to `elasticsearch` and the quickstart compose file does not set it,
+while `ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED` defaults to
+`true`. The quickstart's backend is OpenSearch. GMS sends the Elasticsearch
+`_pit` call to a server that answers point-in-time on a different endpoint.
+
+`scripts/probe_gms.ps1` reproduces it straight against GraphQL, independent of
+both clients. `scripts/fix_gms_search.ps1` layers a compose override that sets
+`ELASTICSEARCH_IMPLEMENTATION=opensearch` and recreates **only** `datahub-gms`
+with `--no-deps` — no volume touched, catalog survives, `-Mode revert` undoes it.
+
+**The design change this forced, and why it is better.** Checked whether
+`get_entities` could supply declared inputs instead. It cannot: `inputOutput`,
+`inputDatasets` and `outputDatasets` appear in **none** of the MCP Server's
+GraphQL documents, though GMS exposes `DataJob.inputOutput` (probe #3 verifies
+this). That is a gap in the MCP Server, worth an upstream PR.
+
+So the integration was rebuilt around the two tools that do not touch the broken
+resolver — `get_entities` and `search` — as `src/polygraph/catalog_mcp.py`, and
+both are wired into the `ask --llm` agent loop alongside Polygraph's own six.
+That composition is more interesting than the original plan: Polygraph's tools
+return **evidence** (what a capture proved), DataHub's return **testimony** (what
+the catalog claims), and the system prompt requires the model to keep them
+distinguishable. The gap between the two is the entire subject of the project.
+
+`reconcile` now defaults to `--declared-via sdk`. The default has to work on a
+clean clone against a stock quickstart; `--declared-via mcp` stays, gate-tested,
+and needs the environment fix.
+
+Gate 10 split accordingly: **10a** (catalog context, must be green) and **10b**
+(declared lineage, may be environment-blocked). 10b is allowed to report
+"blocked" for exactly one error signature — anything else is red. A known bug is
+an excuse for one message and no others.
+
+Transport extracted to `src/polygraph/dh_mcp.py` so `declared_mcp` and
+`catalog_mcp` cannot drift on how they launch and configure the server.
+
+Extraction is structural everywhere — walking payloads rather than indexing
+fixed paths. Owner extraction is scoped to the `ownership` subtree specifically:
+`lastModified.actor` and `created.actor` are also corpuser URNs, and reporting
+the last editor as the owner would be a quiet, plausible lie. A URN the catalog
+does not know comes back `found: false` rather than vanishing, because otherwise
+"no owner" and "does not exist" become the same answer.
+
+78 tests passing, 2 skipped (the live-capture oracle pair, which run on the
+box with DataHub).

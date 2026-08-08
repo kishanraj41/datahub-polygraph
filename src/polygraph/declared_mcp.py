@@ -16,69 +16,35 @@ SDK result is the known-good oracle, and any divergence is either a bug here or
 a genuine difference between what the aspect says and what the agent-facing API
 reports -- and both are worth knowing about.
 
-Requires `mcp-server-datahub` on PATH (it is in `requirements.txt`) and DataHub
-credentials from `DATAHUB_GMS_URL` / `DATAHUB_GMS_TOKEN` or `~/.datahubenv`,
-which `datahub init` writes.
+KNOWN LIMITATION. ``get_lineage`` resolves to GraphQL ``searchAcrossLineage``.
+On a DataHub stack whose GMS speaks the Elasticsearch dialect to an OpenSearch
+backend, that resolver fails to create a point-in-time snapshot and returns a
+500 -- and so does the DataHub UI's own Lineage tab. This path is therefore not
+the default. See ``docs/DATAHUB_MCP.md``, ``scripts/probe_gms.ps1`` and
+``scripts/fix_gms_search.ps1``. ``catalog_mcp`` reaches DataHub through MCP tools
+that do not touch that resolver.
+
+Requires `mcp-server-datahub` importable in the same environment (it is in
+`requirements.txt`) and DataHub credentials from `DATAHUB_GMS_URL` /
+`DATAHUB_GMS_TOKEN` or `~/.datahubenv`, which `datahub init` writes.
 """
 
 from __future__ import annotations
 
-import asyncio
-import importlib.util
 import json
-import os
 import re
-import shutil
-import sys
 from typing import Any
 
+from . import dh_mcp
 from .declared import DeclaredLineage
+from .dh_mcp import DataHubMcpError, resolve_server_command  # noqa: F401 - public re-export
 from .reconcile import DeclaredEdge
 
 DATASET_URN_RE = re.compile(r"^urn:li:dataset:\(")
-SERVER_MODULE = "mcp_server_datahub"
-SERVER_SCRIPT = "mcp-server-datahub"
-CALL_TIMEOUT_S = 60
 
 
-class McpLineageError(RuntimeError):
+class McpLineageError(DataHubMcpError):
     pass
-
-
-def resolve_server_command() -> list[str]:
-    """Build the argv that launches DataHub's MCP Server.
-
-    Launching by bare console-script name fails on Windows: ``CreateProcess``
-    does not search PATH the way a shell does, and a venv's ``Scripts``
-    directory is not on the subprocess PATH, so ``mcp-server-datahub`` raises
-    ``[WinError 2] The system cannot find the file specified``.
-
-    Running it as a module through the *current* interpreter avoids the problem
-    entirely and additionally guarantees the server runs in the same virtualenv
-    as Polygraph -- so it sees the same DataHub credentials and the same pinned
-    ``acryl-datahub``. The console script is only a fallback, and
-    ``POLYGRAPH_MCP_SERVER_CMD`` overrides both.
-    """
-    override = os.environ.get("POLYGRAPH_MCP_SERVER_CMD")
-    if override:
-        import shlex
-
-        return shlex.split(override, posix=(os.name != "nt"))
-
-    if importlib.util.find_spec(SERVER_MODULE) is not None:
-        return [sys.executable, "-m", SERVER_MODULE]
-
-    script = shutil.which(SERVER_SCRIPT)
-    if script:
-        return [script]
-
-    raise McpLineageError(
-        f"DataHub's MCP Server is not available. `{SERVER_MODULE}` is not importable "
-        f"by {sys.executable} and `{SERVER_SCRIPT}` is not on PATH.\n"
-        "Install it into the same environment as Polygraph:\n"
-        "    pip install -r requirements.txt\n"
-        "Or set POLYGRAPH_MCP_SERVER_CMD to an explicit command."
-    )
 
 
 def _extract_dataset_urns(payload: Any) -> list[str]:
@@ -112,57 +78,21 @@ def _extract_dataset_urns(payload: Any) -> list[str]:
     return sorted(found)
 
 
-def _server_env(gms: str | None, token: str | None) -> dict[str, str]:
-    env = dict(os.environ)
-    if gms:
-        env["DATAHUB_GMS_URL"] = gms
-    if token:
-        env["DATAHUB_GMS_TOKEN"] = token
-    # The server logs to stderr at INFO; keep stdout clean for the protocol.
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    env.setdefault("PYTHONUTF8", "1")
-    # The server phones home to Mixpanel on startup. Polygraph spawns it on
-    # every reconcile, so that is repeated latency and a repeated network
-    # dependency for a step that should be local and deterministic.
-    env.setdefault("DATAHUB_TELEMETRY_ENABLED", "false")
-    return env
-
-
-async def _fetch(job_urn: str, gms: str | None, token: str | None) -> dict[str, Any]:
-    from fastmcp import Client
-    from fastmcp.client.transports import StdioTransport
-
-    argv = resolve_server_command()
-    transport = StdioTransport(
-        command=argv[0],
-        args=argv[1:] + ["--transport", "stdio"],
-        env=_server_env(gms, token),
-    )
-
-    async with Client(transport) as client:
-        tools = {t.name for t in await client.list_tools()}
-        if "get_lineage" not in tools:
-            raise McpLineageError(
-                "DataHub's MCP Server did not advertise a `get_lineage` tool. "
-                f"Advertised: {sorted(tools)}. Check the GMS version -- read tools "
-                "are version-gated in mcp_server_datahub/version_requirements.py."
-            )
-
-        result = await asyncio.wait_for(
-            client.call_tool(
+def _run_fetch(job_urn: str, gms: str | None, token: str | None) -> dict[str, Any]:
+    """One call to DataHub's MCP Server. Patch point for tests, so they never
+    have to stub ``asyncio.run`` -- which leaves an un-awaited coroutine and a
+    RuntimeWarning in the output."""
+    out = dh_mcp.call_tools(
+        [
+            (
                 "get_lineage",
                 {"urn": job_urn, "upstream": True, "max_hops": 1, "max_results": 100},
-            ),
-            timeout=CALL_TIMEOUT_S,
-        )
-        return {"tools": sorted(tools), "payload": result.data}
-
-
-def _run_fetch(job_urn: str, gms: str | None, token: str | None) -> dict[str, Any]:
-    """Sync wrapper around the async call. Exists as a patch point so tests do
-    not have to stub ``asyncio.run``, which leaves an un-awaited coroutine and a
-    RuntimeWarning in the output."""
-    return asyncio.run(_fetch(job_urn, gms, token))
+            )
+        ],
+        gms,
+        token,
+    )
+    return {"tools": out["tools"], "payload": out["results"]["get_lineage"]}
 
 
 def fetch_declared_via_mcp(
@@ -173,23 +103,11 @@ def fetch_declared_via_mcp(
     """Read a dataJob's declared upstreams through DataHub's MCP Server."""
     try:
         out = _run_fetch(job_urn, gms, token)
-    except McpLineageError:
+    except DataHubMcpError:
         raise
     except Exception as e:  # noqa: BLE001 - surfaced with context, never swallowed
-        hint = ""
-        if "Connection closed" in str(e) or "failed to connect" in str(e).lower():
-            hint = (
-                "\nThe server process exited during startup. It calls "
-                "DataHubClient.from_env() -> test_connection() before serving, so the "
-                "usual cause is that GMS is unreachable, not a protocol problem. "
-                "Confirm http://localhost:8080/config answers.\n"
-            )
         raise McpLineageError(
-            f"Could not read lineage via DataHub's MCP Server: {type(e).__name__}: {e}\n"
-            f"{hint}"
-            f"Server command: {' '.join(resolve_server_command())}\n"
-            "Check DataHub credentials are available (DATAHUB_GMS_URL / ~/.datahubenv "
-            "from `datahub init`)."
+            "Could not read lineage via DataHub's MCP Server.\n" + dh_mcp.explain_failure(e)
         ) from e
 
     payload = out["payload"]

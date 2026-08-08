@@ -93,6 +93,15 @@ def test_llm_system_prompt_forbids_overstating() -> None:
     assert "only from tool results" in s.lower()
 
 
+POLYGRAPH_TOOLS = {
+    "can_i_trust", "get_integrity_score", "list_undeclared_sources",
+    "list_phantom_edges", "get_incident_report", "explain_verdict_semantics",
+}
+# Tools in the agent loop that proxy to DataHub's MCP Server. They return the
+# catalog's testimony, not Polygraph's evidence.
+DATAHUB_PROXY_TOOLS = {"datahub_get_entities", "datahub_search"}
+
+
 def test_both_backends_share_one_tool_implementation() -> None:
     """Two implementations of 'can I trust this' would drift. That is the whole
     failure mode Polygraph exists to catch, so it must not exist internally."""
@@ -100,7 +109,48 @@ def test_both_backends_share_one_tool_implementation() -> None:
 
     assert ask_mod.TOOL_FUNCS["can_i_trust"] is tools.can_i_trust
     assert mcp_server.tools is tools
-    assert set(ask_mod.TOOL_FUNCS) == {
-        "can_i_trust", "get_integrity_score", "list_undeclared_sources",
-        "list_phantom_edges", "get_incident_report", "explain_verdict_semantics",
-    }
+
+    for name in POLYGRAPH_TOOLS:
+        assert ask_mod.TOOL_FUNCS[name] is getattr(tools, name), (
+            f"{name} in the agent loop is not the same object as polygraph.tools.{name}"
+        )
+
+    assert set(ask_mod.TOOL_FUNCS) == POLYGRAPH_TOOLS | DATAHUB_PROXY_TOOLS
+
+
+def test_polygraph_does_not_readvertise_datahubs_tools() -> None:
+    """The agent loop may hold tools from both servers. Polygraph's OWN MCP server
+    must not: re-exporting another server's tools under Polygraph's name would
+    make catalog testimony look like Polygraph evidence to any client that reads
+    the tool list."""
+    import asyncio
+
+    from fastmcp import Client
+
+    from polygraph import mcp_server
+
+    async def _run() -> set[str]:
+        async with Client(mcp_server.mcp) as c:
+            return {t.name for t in await c.list_tools()}
+
+    advertised = asyncio.run(_run())
+    assert advertised == POLYGRAPH_TOOLS
+    assert not (advertised & DATAHUB_PROXY_TOOLS)
+
+
+def test_every_schema_has_an_implementation() -> None:
+    """A schema without a function is a tool the model can call into a hole."""
+    schema_names = {s["name"] for s in ask_mod.TOOL_SCHEMAS}
+    assert schema_names == set(ask_mod.TOOL_FUNCS)
+    for s in ask_mod.TOOL_SCHEMAS:
+        assert s["description"], f"{s['name']} has no description for the model to read"
+
+
+def test_system_prompt_separates_evidence_from_testimony() -> None:
+    """The two tool families answer different kinds of question. If the model is
+    allowed to blur them, a catalog description can end up standing in for proof
+    about what ran -- which is the exact confusion Polygraph exists to expose."""
+    s = ask_mod.SYSTEM
+    assert "EVIDENCE" in s and "TESTIMONY" in s
+    assert "the catalog says" in s
+    assert "Polygraph observed" in s

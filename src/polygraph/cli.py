@@ -23,7 +23,7 @@ from . import propose as propose_mod
 from . import reconcile as rec
 from . import score as score_mod
 from . import writeback as wb
-from .fsutil import write_text_lf
+from .fsutil import write_json_lf, write_text_lf
 from .observed import export
 from .urnmap import UrnMap
 
@@ -55,12 +55,16 @@ def cmd_observe(args: argparse.Namespace) -> int:
 
 
 def _fetch_declared(args: argparse.Namespace):
-    """Read the catalog's claim, via DataHub's MCP Server or the SDK.
+    """Read the catalog's claim, via the SDK or DataHub's MCP Server.
 
-    MCP is the default: it is the interface DataHub offers to agents, so it is
-    the answer an agent would actually get. The SDK path remains available
-    because it reads the aspect directly and is the oracle Gate 10 compares
-    against.
+    The SDK is the default. Not because it is the better interface -- the MCP
+    path is the answer an agent would actually get, which is the thing Polygraph
+    is arguing about -- but because it is the one that works on a stock OSS
+    quickstart. `get_lineage` resolves to `searchAcrossLineage`, which 500s on a
+    GMS speaking the Elasticsearch dialect to an OpenSearch backend. A default
+    that fails on a clean clone is worse than a less interesting default.
+
+    Both paths are gate-tested against each other; see docs/DATAHUB_MCP.md.
     """
     if args.declared_via == "mcp":
         return declared_mcp.fetch_declared_via_mcp(args.job, args.gms, args.token)
@@ -359,6 +363,80 @@ def cmd_revert(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def cmd_catalog(args: argparse.Namespace) -> int:
+    """Read catalog context for the assets in a reconciliation, through DataHub's
+    MCP Server.
+
+    Separate from ``reconcile`` on purpose. A verdict is evidence and must be
+    reproducible offline from a capture; catalog context is testimony fetched
+    live over the network. Folding the second into the first would make the
+    reconciliation report depend on a running DataHub, and the report is the
+    artifact a judge is meant to be able to re-derive.
+    """
+    from . import catalog_mcp
+
+    urns: list[str] = list(args.urns or [])
+    if not urns:
+        report_path = Path(args.report)
+        if not report_path.exists():
+            print(
+                f"No report at {report_path} and no --urns given. Run `polygraph reconcile` "
+                "first, or name URNs explicitly.",
+                file=sys.stderr,
+            )
+            return 1
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        seen: list[str] = []
+        for v in report.get("verdicts", []):
+            for side in ("upstream", "downstream"):
+                if v[side] not in seen:
+                    seen.append(v[side])
+        urns = seen
+
+    if not urns:
+        print("Nothing to look up.", file=sys.stderr)
+        return 1
+
+    print(f"Reading catalog context for {len(urns)} asset(s) via DataHub's MCP Server...\n")
+    context = catalog_mcp.fetch_catalog_context(urns, args.gms, args.token)
+
+    payload: dict = {
+        "source": "mcp-server-datahub",
+        "tools_used": ["get_entities"],
+        "assets": [c.to_dict() for c in context.values()],
+    }
+
+    for c in context.values():
+        if not c.found:
+            print(f"  MISSING  {c.urn}")
+            continue
+        owners = ", ".join(c.owners) if c.owners else "no owner recorded"
+        print(f"  {c.name or '(unnamed)'}")
+        print(f"      {c.urn}")
+        print(f"      owners: {owners}")
+
+    if args.search:
+        print(f"\nSearching the catalog for {args.search!r}...")
+        hits = catalog_mcp.search_catalog(args.search, args.gms, args.token, args.search_count)
+        payload["tools_used"].append("search")
+        payload["search"] = hits
+        for h in hits["hits"]:
+            print(f"  {h['kind']:8} {h['name'] or ''}  {h['urn']}")
+        if not hits["hits"]:
+            print("  no registered assets matched")
+
+    out = Path(args.out_json)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    write_json_lf(out, payload)
+    print(f"\nWritten to {out}")
+
+    missing = [c.urn for c in context.values() if not c.found]
+    if missing and args.strict:
+        print(f"\n{len(missing)} URN(s) not present in the catalog.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="polygraph", description=__doc__)
     sub = p.add_subparsers(dest="command", required=True)
@@ -381,9 +459,13 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument(
         "--declared-via",
         choices=["mcp", "sdk"],
-        default="mcp",
-        help="read declared lineage through DataHub's MCP Server (default) or the "
-             "acryl-datahub SDK. Gate 10 asserts both produce identical verdicts.",
+        default="sdk",
+        help="read declared lineage through the acryl-datahub SDK (default) or "
+             "DataHub's MCP Server. The MCP path needs a GMS whose graph queries work "
+             "-- on a stock OSS quickstart they 500 on point-in-time creation, which "
+             "also breaks DataHub's own UI Lineage tab. See docs/DATAHUB_MCP.md and "
+             "scripts/probe_gms.ps1. The SDK default is what a judge can reproduce "
+             "from a clean clone.",
     )
     r.add_argument(
         "--allow-discrepancies",
@@ -452,6 +534,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pr.add_argument("--revert", default=None, help="restore lineage from a revert snapshot")
     pr.set_defaults(func=lambda a: cmd_revert(a) if a.revert else cmd_propose(a))
+
+    ct = sub.add_parser(
+        "catalog",
+        help="read catalog context (owners, descriptions, search) via DataHub's MCP Server",
+    )
+    ct.add_argument("--report", default="examples/reconciliation_report.json",
+                    help="take the asset list from this reconciliation report")
+    ct.add_argument("--urns", nargs="*", default=None, help="look up these URNs instead")
+    ct.add_argument("--search", default=None,
+                    help="also search the catalog for this text. DataHub's structured "
+                         "syntax works, e.g. '/q fee+schedule'.")
+    ct.add_argument("--search-count", type=int, default=10)
+    ct.add_argument("--gms", default=DEFAULT_GMS)
+    ct.add_argument("--token", default=None)
+    ct.add_argument("--out-json", default="examples/catalog_context.json")
+    ct.add_argument("--strict", action="store_true",
+                    help="exit non-zero if any URN is absent from the catalog")
+    ct.set_defaults(func=cmd_catalog)
 
     return p
 

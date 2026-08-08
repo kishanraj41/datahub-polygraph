@@ -1,0 +1,48 @@
+{
+  "lineage": {
+    "ok": false,
+    "kind": "pit",
+    "detail": "Failed to generate PointInTime Identifier.. Root cause: search: Name or service not known",
+    "data": {
+      "searchAcrossLineage": null
+    }
+  },
+  "entities": {
+    "ok": false,
+    "kind": "graphql",
+    "detail": "Validation error (FieldUndefined@[entities/ownership/owners/owner/urn]) : Field 'urn' in type 'OwnerType' is undefined | Validation error (FieldUndefined@[entities/ownership/owners/owner/urn]) : Field 'urn' in type 'OwnerType' is undefined",
+    "data": null
+  },
+  "inputOutput": {
+    "ok": true,
+    "kind": "ok",
+    "data": {
+      "entity": {
+        "urn": "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)",
+        "inputOutput": {
+          "inputDatasets": [
+            {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)"
+            },
+            {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.legacy_claims_archive,PROD)"
+            }
+          ],
+          "outputDatasets": [
+            {
+              "urn": "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.fraud_predictions,PROD)"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "search": {
+    "ok": false,
+    "kind": "graphql",
+    "detail": "java.lang.RuntimeException: Failed to execute search: entity types [DATASET], query polygraph, filters: null, start: 0, count: 10. Root cause: Failed to execute search: entity types [DATASET], query polygraph, filters: null, start: 0, count: 10. Search query failed:. search",
+    "data": {
+      "searchAcrossEntities": null
+    }
+  }
+}
