@@ -12,11 +12,16 @@ UI.
 
 ## What Polygraph calls, and where
 
-| DataHub MCP tool | GraphQL resolver | Used by | Status |
+| DataHub MCP tool | GraphQL resolver | Used by | Needs the search backend? |
 |---|---|---|---|
-| `get_entities` | `entities(urns:)` | `polygraph catalog`, `polygraph ask --llm` | works |
-| `search` | `searchAcrossEntities` | `polygraph catalog --search`, `polygraph ask --llm` | works |
-| `get_lineage` | `searchAcrossLineage` | `polygraph reconcile --declared-via mcp` | **blocked on a stock OSS quickstart** — see below |
+| `get_entities` | `entities(urns:)` | `polygraph catalog`, `polygraph ask --llm` | no — reads from MySQL |
+| `search` | `searchAcrossEntities` | `polygraph catalog --search`, `polygraph ask --llm` | yes |
+| `get_lineage` | `searchAcrossLineage` | `polygraph reconcile --declared-via mcp` | yes, plus point-in-time |
+
+The last column is the one that matters when something breaks. A stack whose
+search backend is missing still answers `/config`, still serves entity reads, and
+still passes every gate in this project except the two that need search — which
+is exactly how it stays undiagnosed.
 
 `src/polygraph/dh_mcp.py` holds the transport. `catalog_mcp.py` and
 `declared_mcp.py` are the two callers.
@@ -40,21 +45,42 @@ The MCP Server sends an ordinary `searchAcrossLineage` query — degree filter,
 UI Lineage tab** sends. Reproduced independently of both, straight against
 GraphQL, by `scripts/probe_gms.py`.
 
-### Root cause
+### Two candidate causes, and the test that separates them
 
-Two DataHub GMS defaults collide with how the quickstart is packaged:
+Recorded honestly, because the first diagnosis here was stated with more
+confidence than the evidence supported.
 
-- `ELASTICSEARCH_IMPLEMENTATION` defaults to `elasticsearch`, and the quickstart
-  compose file does not set it.
-- `ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED` defaults to `true`
-  — every graph query creates a point-in-time snapshot.
+**Candidate A — dialect mismatch.** Two GMS defaults collide with how the
+quickstart is packaged: `ELASTICSEARCH_IMPLEMENTATION` defaults to
+`elasticsearch` and the quickstart compose file does not set it, while
+`ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED` defaults to `true`,
+so every graph query creates a point-in-time snapshot. If the backend is
+OpenSearch, GMS is calling the wrong endpoint: Elasticsearch exposes
+point-in-time at `POST /<index>/_pit`, OpenSearch at
+`POST /_search/point_in_time`.
 
-The quickstart's search backend is **OpenSearch**. Elasticsearch exposes
-point-in-time at `POST /<index>/_pit`; OpenSearch exposes it at
-`POST /_search/point_in_time`. GMS sends the Elasticsearch call, OpenSearch
-rejects it, and every lineage query 500s.
+**Candidate B — the search backend is not reachable at all.** GMS answers
+`/config` and serves entity reads regardless, because those come from MySQL. A
+stack with no running search container looks healthy from the outside and fails
+every search and lineage query.
 
-### Fix
+**The discriminator: `searchAcrossEntities`.** Ordinary search uses no
+point-in-time and no graph traversal.
+
+| `searchAcrossLineage` | `searchAcrossEntities` | Diagnosis |
+|---|---|---|
+| 500 (PointInTime) | works | Candidate A — apply the fix below |
+| 500 (PointInTime) | also fails | Candidate B — the backend is down; the PIT error is a symptom |
+| works | works | nothing to fix |
+
+`scripts/probe_gms.py` runs both and prints the reading.
+`scripts/stack_status.ps1` lists every container, running or stopped, and
+checks `:9200`.
+
+Applying the Candidate A fix to a Candidate B stack changes a setting on a
+service whose actual problem is a missing peer, and wastes a GMS restart.
+
+### Fix for Candidate A
 
 ```powershell
 .\scripts\probe_gms.ps1          # read-only diagnosis, changes nothing
@@ -131,3 +157,40 @@ source, proven read at runtime. Is that asset registered in the catalog at all,
 under some other name? A hit means the catalog knows the asset but not the edge.
 A miss means the asset is invisible to the catalog entirely — worse, and a
 different fix.
+
+---
+
+## Two bugs of our own, found by running it
+
+Recorded because the errors they produced were both misleading, and the
+misleading part is the reusable lesson.
+
+**1. The subprocess was launched without credentials.** `server_env` set
+`DATAHUB_GMS_URL` only when a caller passed one explicitly. `gate10_catalog_smoke.py`
+did not, so DataHub's MCP Server started with nothing, hit `MissingConfigError`
+inside `DataHubClient.from_env()`, and died before serving a single tool. The
+stdio transport reported that as:
+
+```
+mcp.shared.exceptions.McpError: Connection closed
+```
+
+An infrastructure failure wearing a protocol failure's clothes, four layers from
+the cause. Fixed two ways: `dh_mcp.resolve_gms()` now always produces a URL
+(argument → environment → `~/.datahubenv` → quickstart default) and always sets
+it on the subprocess, and `dh_mcp.preflight()` checks GMS answers *before*
+launching, so "GMS is down" keeps saying so. `tests/test_dh_mcp.py` is the
+regression.
+
+**2. The probe's own GraphQL was wrong.** Probe #2 reported
+
+```
+Validation error (FieldUndefined@[entities/ownership/owners/owner/urn])
+: Field 'urn' in type 'OwnerType' is undefined
+```
+
+which reads like a broken server and is a broken query: `OwnerType` is a union of
+`CorpUser` and `CorpGroup`, so `urn` has to be selected inside an inline fragment
+per concrete type. The MCP Server sends its own, correct query — so this said
+nothing about whether `get_entities` works. The probe now says so in its output
+rather than letting a reader conclude the catalog is unreachable.

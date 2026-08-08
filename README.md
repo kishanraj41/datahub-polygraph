@@ -238,16 +238,15 @@ Three MCP tools are used:
 | `get_lineage` | what does the catalog say feeds this job | `reconcile --declared-via mcp` |
 
 `get_lineage` is **not** the default path, and the reason is worth stating
-plainly: on a stock DataHub OSS quickstart it returns a 500. GMS defaults to the
-Elasticsearch dialect (`ELASTICSEARCH_IMPLEMENTATION=elasticsearch`) while the
-quickstart runs OpenSearch, and graph queries create a point-in-time snapshot by
-default — so GMS sends an Elasticsearch `_pit` call to a server that does not
-have that endpoint. This is not specific to Polygraph or to the MCP Server; the
-same query backs **DataHub's own UI Lineage tab**. `scripts/probe_gms.ps1`
-diagnoses it, `scripts/fix_gms_search.ps1` fixes it, and
-[`docs/DATAHUB_MCP.md`](docs/DATAHUB_MCP.md) documents both. The default stays on
-the SDK because a judge cloning this repo should get a working run without first
-reconfiguring their search backend.
+plainly: on the stack this was built against, it returns a 500 —
+`Failed to generate PointInTime Identifier`, from GMS, on `searchAcrossLineage`.
+That is not specific to Polygraph or to the MCP Server; the same query backs
+**DataHub's own UI Lineage tab**, so a stack that cannot serve one cannot serve
+the other. `scripts/probe_gms.ps1` reproduces it straight against GraphQL, and
+[`docs/DATAHUB_MCP.md`](docs/DATAHUB_MCP.md) sets out the two candidate causes
+and the test that tells them apart. The default stays on the SDK because a judge
+cloning this repo should get a working run without first having to debug their
+search backend.
 
 When the MCP lineage path *does* work, `scripts/run_gate10.ps1` reconciles twice,
 once per path, and fails if the per-edge verdicts differ. Matching totals with
@@ -349,13 +348,12 @@ about what it cannot do.
   `isinstance(path, str)`, so `pd.read_csv(Path(...))` records *nothing* — no
   file lineage at all, silently. `demo/pipeline.py` passes `str(...)`
   explicitly. This is an upstream bug, not a design choice.
-- **Lineage queries fail on a stock OSS quickstart.** GMS defaults to the
-  Elasticsearch dialect while the quickstart runs OpenSearch, so every
-  `searchAcrossLineage` call 500s on point-in-time creation — which breaks
+- **Lineage queries fail on the stack this was built against.** Every
+  `searchAcrossLineage` call 500s on point-in-time creation, which breaks
   `reconcile --declared-via mcp` *and* DataHub's own UI Lineage tab. Not a
   Polygraph bug, but Polygraph has to live with it: the default declared-lineage
-  path is the SDK. `scripts/probe_gms.ps1` diagnoses,
-  `scripts/fix_gms_search.ps1` fixes, `docs/DATAHUB_MCP.md` explains.
+  path is the SDK. `scripts/probe_gms.ps1` and `scripts/stack_status.ps1`
+  diagnose; `docs/DATAHUB_MCP.md` explains what is and is not yet established.
 - **DataHub's MCP Server cannot report declared job inputs.** Its GraphQL
   documents never request `DataJob.inputOutput`. So even with the point-in-time
   bug fixed, the only MCP route to declared lineage is `get_lineage`, which

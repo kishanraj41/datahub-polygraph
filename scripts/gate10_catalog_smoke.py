@@ -21,13 +21,14 @@ documented in docs/DATAHUB_MCP.md.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from polygraph import catalog_mcp  # noqa: E402
+from polygraph import catalog_mcp, dh_mcp  # noqa: E402
 
 JOB = "urn:li:dataJob:(urn:li:dataFlow:(polygraph,fraud_scoring,PROD),train_fraud_model)"
 RAW = "urn:li:dataset:(urn:li:dataPlatform:file,polygraph.demo.raw_claims,PROD)"
@@ -47,11 +48,21 @@ def check(label: str, ok: bool, detail: str = "") -> None:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--gms", default=None, help="GMS URL. Resolved automatically if omitted.")
+    ap.add_argument("--token", default=None)
+    args = ap.parse_args()
+
+    gms, _ = dh_mcp.resolve_gms(args.gms, args.token)
     print("Gate 10a -- catalog context through DataHub's MCP Server")
     print("=" * 66)
+    # Printed because the previous red was a credential resolution failure that
+    # surfaced four layers away as "Connection closed". Show the input.
+    print(f"GMS: {gms}")
+    print(f"server: {' '.join(dh_mcp.resolve_server_command())}")
 
     print("\n1. get_entities on the job, a real dataset, and one that does not exist")
-    context = catalog_mcp.fetch_catalog_context([JOB, RAW, FEE, GHOST])
+    context = catalog_mcp.fetch_catalog_context([JOB, RAW, FEE, GHOST], args.gms, args.token)
 
     check("every requested URN is accounted for", set(context) == {JOB, RAW, FEE, GHOST})
     check("the training job was found", context[JOB].found)
@@ -73,7 +84,7 @@ def main() -> int:
     )
 
     print("\n2. search for the undeclared source")
-    hits = catalog_mcp.search_catalog("/q fee+schedule")
+    hits = catalog_mcp.search_catalog("/q fee+schedule", args.gms, args.token)
     urns = {h["urn"] for h in hits["hits"]}
     check(
         "the undeclared source is findable in the catalog",

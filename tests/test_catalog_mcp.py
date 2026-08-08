@@ -171,6 +171,9 @@ def test_search_passes_num_results_through(monkeypatch):
 # -------------------------------------------------------------------- errors
 
 def test_transport_failure_is_wrapped_with_context(monkeypatch):
+    """`Connection closed` reaches here only after the preflight found GMS
+    healthy, so the message must send the reader to the child's traceback rather
+    than back to 'is DataHub running'."""
     def boom(*a, **k):
         raise ConnectionError("Connection closed")
 
@@ -181,7 +184,30 @@ def test_transport_failure_is_wrapped_with_context(monkeypatch):
 
     msg = str(exc.value)
     assert "MCP Server" in msg
-    assert "test_connection" in msg, "the error should name the likely cause, not just the type"
+    assert "NOT simple unreachability" in msg
+    assert "Resolved GMS" in msg, "show what it actually tried to talk to"
+
+
+def test_missing_credentials_are_named_as_such(monkeypatch):
+    """The Gate 10a red. MissingConfigError must not be reported as a generic
+    transport fault."""
+    def boom(*a, **k):
+        raise RuntimeError("MissingConfigError: No ~/.datahubenv file found")
+
+    monkeypatch.setattr(catalog_mcp.dh_mcp, "call_tools", boom)
+
+    with pytest.raises(CatalogContextError, match="credentials"):
+        fetch_catalog_context([RAW])
+
+
+def test_dead_search_backend_is_distinguished_from_a_config_problem(monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("java.lang.RuntimeException: Failed to execute search: ...")
+
+    monkeypatch.setattr(catalog_mcp.dh_mcp, "call_tools", boom)
+
+    with pytest.raises(CatalogContextError, match="search backend"):
+        search_catalog("anything")
 
 
 def test_point_in_time_failure_names_the_probe_script(monkeypatch):

@@ -127,6 +127,11 @@ V_LINEAGE = {
     }
 }
 
+# `OwnerType` is a GraphQL union of CorpUser and CorpGroup, so `owner { urn }` is
+# a validation error -- the field has to be selected inside an inline fragment
+# per concrete type. Getting this wrong the first time produced
+# "Field 'urn' in type 'OwnerType' is undefined", which reads like a broken
+# server and is in fact a broken query.
 Q_ENTITIES = """
 query P($urns: [String!]!) {
   entities(urns: $urns) {
@@ -135,12 +140,12 @@ query P($urns: [String!]!) {
     ... on DataJob {
       jobId
       properties { name description }
-      ownership { owners { owner { urn } } }
+      ownership { owners { owner { ... on CorpUser { urn } ... on CorpGroup { urn } } } }
     }
     ... on Dataset {
       name
       properties { name description }
-      ownership { owners { owner { urn } } }
+      ownership { owners { owner { ... on CorpUser { urn } ... on CorpGroup { urn } } } }
     }
   }
 }
@@ -224,34 +229,58 @@ def main() -> int:
     print("=" * 72)
 
     lineage_ok = results["lineage"]["ok"]
+    search_ok = results["search"]["ok"]
+    entities_ok = results["entities"]["ok"]
     pit = results["lineage"].get("kind") == "pit"
 
-    if lineage_ok:
-        print("* searchAcrossLineage works. The UI Lineage tab is fine, and")
-        print("  `reconcile --declared-via mcp` should work once re-run.")
-    elif pit:
-        print("* searchAcrossLineage fails on point-in-time creation.")
-        print("  This is a GMS <-> search-engine dialect mismatch, not our bug:")
-        print("  ELASTICSEARCH_IMPLEMENTATION defaults to 'elasticsearch' and the")
-        print("  quickstart runs OpenSearch, while")
-        print("  ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED defaults")
-        print("  to true. GMS sends the Elasticsearch _pit call to OpenSearch.")
+    # The discriminator that matters. searchAcrossEntities is ordinary search --
+    # no point-in-time, no graph traversal. If it fails too, the search backend
+    # is unreachable, and the point-in-time error is a symptom rather than the
+    # disease. Reading only the lineage failure would send you to fix a config
+    # value on a service that has nothing to talk to.
+    if not lineage_ok and not search_ok:
+        print("* BOTH lineage and plain search fail.")
+        print("  This is not a dialect or point-in-time config problem: ordinary")
+        print("  search does not use point-in-time at all. GMS cannot reach its")
+        print("  search backend.")
         print()
-        print("  CONSEQUENCE: the DataHub UI's Lineage tab is broken too. Check it")
-        print("  before recording anything:")
-        print(f"    http://localhost:9002/tasks/{JOB_URN}/Lineage")
+        print("  Most likely the OpenSearch/Elasticsearch container is not running.")
+        print("  GMS still answers /config and still serves entity reads, because")
+        print("  those come from MySQL -- which is why the rest of the demo works.")
+        print()
+        print("  NEXT: scripts/stack_status.ps1  (shows every container, running or not)")
+        print("  Do NOT run fix_gms_search.ps1 yet -- it changes a setting on a")
+        print("  service whose problem is a missing peer.")
+    elif not lineage_ok and pit:
+        print("* Lineage fails on point-in-time creation, but plain search works.")
+        print("  That is the dialect mismatch: ELASTICSEARCH_IMPLEMENTATION defaults")
+        print("  to 'elasticsearch' while the quickstart runs OpenSearch, and")
+        print("  ELASTICSEARCH_SEARCH_GRAPH_POINT_IN_TIME_CREATION_ENABLED defaults")
+        print("  to true, so GMS sends an Elasticsearch _pit call to OpenSearch.")
         print()
         print("  FIX: scripts/fix_gms_search.ps1")
+    elif not lineage_ok:
+        print("* Lineage fails for a reason that is NOT point-in-time, while plain")
+        print("  search works. Read the detail above; none of the known fixes apply.")
     else:
-        print("* searchAcrossLineage fails for a reason that is NOT point-in-time.")
-        print("  Read the detail above before assuming the OpenSearch fix applies.")
+        print("* searchAcrossLineage works. The UI Lineage tab is fine, and")
+        print("  `reconcile --declared-via mcp` should work.")
+
+    if not lineage_ok:
+        print()
+        print("  Either way, the DataHub UI's Lineage tab uses this same resolver.")
+        print("  Check it before recording anything:")
+        print(f"    http://localhost:9002/tasks/{JOB_URN}/Lineage")
 
     print()
-    if results["entities"]["ok"]:
+    if entities_ok:
         print("* entities(urns:) works -> catalog context (owners, descriptions) can be")
-        print("  read through the MCP Server's get_entities regardless of the lineage bug.")
+        print("  read through the MCP Server's get_entities regardless of search.")
     else:
-        print("* entities(urns:) ALSO fails. That would be a much bigger problem.")
+        print("* entities(urns:) failed. If the error mentions a GraphQL validation")
+        print("  error, that is THIS PROBE's query being wrong, not GMS being broken --")
+        print("  the MCP Server sends its own query. Only a non-validation failure here")
+        print("  means get_entities is genuinely unavailable.")
 
     io_data = (results["inputOutput"].get("data") or {}).get("entity") or {}
     io_present = bool((io_data.get("inputOutput") or {}).get("inputDatasets"))
